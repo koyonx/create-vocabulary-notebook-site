@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useReducer } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import FlashCard from "@/components/FlashCard";
@@ -10,6 +10,7 @@ import {
   getNotebook,
   getStudyQueue,
   getLearningData,
+  getBatchLearningData,
   saveLearningData,
   saveReviewLog,
 } from "@/lib/storage";
@@ -19,16 +20,41 @@ import type { QuizQuestion } from "@/lib/quiz.types";
 
 type StudyMode = "flashcard" | "quiz";
 
+// #4 fix: useReducerでqueueとindexを一緒に管理し、race conditionを防ぐ
+type FlashcardState = {
+  queue: string[];
+  currentIndex: number;
+};
+
+type FlashcardAction =
+  | { type: "init"; queue: string[] }
+  | { type: "next" }
+  | { type: "requeue"; wordId: string };
+
+function flashcardReducer(state: FlashcardState, action: FlashcardAction): FlashcardState {
+  switch (action.type) {
+    case "init":
+      return { queue: action.queue, currentIndex: 0 };
+    case "next":
+      return { ...state, currentIndex: state.currentIndex + 1 };
+    case "requeue":
+      return {
+        queue: [...state.queue, action.wordId],
+        currentIndex: state.currentIndex + 1,
+      };
+  }
+}
+
 export default function StudyPage() {
   const { id } = useParams<{ id: string }>();
   const [mode, setMode] = useState<StudyMode>("flashcard");
-  const [queue, setQueue] = useState<string[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [fcState, dispatch] = useReducer(flashcardReducer, { queue: [], currentIndex: 0 });
   const [words, setWords] = useState<Map<string, Word>>(new Map());
   const [allWords, setAllWords] = useState<Word[]>([]);
   const [sessionStats, setSessionStats] = useState({ reviewed: 0, correct: 0 });
   const [isComplete, setIsComplete] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Quiz state
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
@@ -37,22 +63,28 @@ export default function StudyPage() {
 
   useEffect(() => {
     (async () => {
-      const notebook = await getNotebook(id);
-      if (!notebook) {
+      try {
+        const notebook = await getNotebook(id);
+        if (!notebook) {
+          setLoading(false);
+          return;
+        }
+
+        const wordMap = new Map<string, Word>();
+        notebook.words.forEach((w) => wordMap.set(w.id, w));
+        setWords(wordMap);
+        setAllWords(notebook.words);
+
+        const studyQueue = await getStudyQueue(id);
+        dispatch({
+          type: "init",
+          queue: studyQueue.length > 0 ? studyQueue : notebook.words.map((w) => w.id),
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "データの読み込みに失敗しました");
+      } finally {
         setLoading(false);
-        return;
       }
-
-      const wordMap = new Map<string, Word>();
-      notebook.words.forEach((w) => wordMap.set(w.id, w));
-      setWords(wordMap);
-      setAllWords(notebook.words);
-
-      const studyQueue = await getStudyQueue(id);
-      setQueue(
-        studyQueue.length > 0 ? studyQueue : notebook.words.map((w) => w.id)
-      );
-      setLoading(false);
     })();
   }, [id]);
 
@@ -66,17 +98,15 @@ export default function StudyPage() {
     setQuizError(null);
 
     try {
-      // 苦手単語を特定
-      const wordsWithWeakness = await Promise.all(
-        allWords.map(async (w) => {
-          const ld = await getLearningData(w.id);
-          return {
-            term: w.term,
-            meaning: w.meaning,
-            isWeak: ld.easeFactor < 2.0 || ld.lapses > 0,
-          };
-        })
-      );
+      const wordIds = allWords.map((w) => w.id);
+      const allLd = await getBatchLearningData(wordIds);
+
+      const wordsWithWeakness = allWords.map((w, i) => ({
+        id: w.id,
+        term: w.term,
+        meaning: w.meaning,
+        isWeak: allLd[i].easeFactor < 2.0 || allLd[i].lapses > 0,
+      }));
 
       const res = await fetch("/api/quiz", {
         method: "POST",
@@ -104,23 +134,26 @@ export default function StudyPage() {
       if (newMode === "quiz") {
         await generateQuiz();
       } else {
-        setCurrentIndex(0);
-        const studyQueue = await getStudyQueue(id);
-        const notebook = await getNotebook(id);
-        setQueue(
-          studyQueue.length > 0
-            ? studyQueue
-            : notebook?.words.map((w) => w.id) || []
-        );
+        try {
+          const studyQueue = await getStudyQueue(id);
+          const notebook = await getNotebook(id);
+          dispatch({
+            type: "init",
+            queue: studyQueue.length > 0
+              ? studyQueue
+              : notebook?.words.map((w) => w.id) || [],
+          });
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "データの読み込みに失敗しました");
+        }
       }
     },
     [id, generateQuiz]
   );
 
-  // Flashcard handlers
   const handleScore = useCallback(
     async (score: ReviewScore) => {
-      const wordId = queue[currentIndex];
+      const wordId = fcState.queue[fcState.currentIndex];
       if (!wordId) return;
 
       const learningData = await getLearningData(wordId);
@@ -134,26 +167,30 @@ export default function StudyPage() {
       }));
 
       if (score < 3) {
-        setQueue((prev) => [...prev, wordId]);
-      }
-
-      if (currentIndex + 1 >= queue.length && score >= 3) {
-        setIsComplete(true);
+        dispatch({ type: "requeue", wordId });
       } else {
-        setCurrentIndex((prev) => prev + 1);
+        // requeue後のqueue長を確認するため、現在のstateを使う
+        const isLast = fcState.currentIndex + 1 >= fcState.queue.length;
+        if (isLast) {
+          setIsComplete(true);
+        } else {
+          dispatch({ type: "next" });
+        }
       }
     },
-    [queue, currentIndex]
+    [fcState]
   );
 
-  // Quiz handlers
+  // #7 fix: wordIdベースのマッチング
   const handleQuizAnswer = useCallback(
     async (questionIndex: number, isCorrect: boolean) => {
       const question = quizQuestions[questionIndex];
       if (!question) return;
 
-      // 単語名からWordを逆引きしてSM-2更新
-      const word = allWords.find((w) => w.term === question.questionWord);
+      // wordIdで直接マッチング（Geminiのterm改変に依存しない）
+      const wordId = question.wordId;
+      const word = wordId ? words.get(wordId) : allWords.find((w) => w.term === question.questionWord);
+
       if (word) {
         const score: ReviewScore = isCorrect ? 4 : 1;
         const learningData = await getLearningData(word.id);
@@ -167,7 +204,7 @@ export default function StudyPage() {
         correct: isCorrect ? prev.correct + 1 : prev.correct,
       }));
     },
-    [quizQuestions, allWords]
+    [quizQuestions, allWords, words]
   );
 
   const handleQuizComplete = useCallback(() => {
@@ -181,25 +218,43 @@ export default function StudyPage() {
     if (mode === "quiz") {
       await generateQuiz();
     } else {
-      setCurrentIndex(0);
-      const studyQueue = await getStudyQueue(id);
-      const notebook = await getNotebook(id);
-      setQueue(
-        studyQueue.length > 0
-          ? studyQueue
-          : notebook?.words.map((w) => w.id) || []
-      );
+      try {
+        const studyQueue = await getStudyQueue(id);
+        const notebook = await getNotebook(id);
+        dispatch({
+          type: "init",
+          queue: studyQueue.length > 0
+            ? studyQueue
+            : notebook?.words.map((w) => w.id) || [],
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "データの読み込みに失敗しました");
+      }
     }
   }, [id, mode, generateQuiz]);
 
-  const currentWord = queue[currentIndex]
-    ? words.get(queue[currentIndex])
+  const currentWord = fcState.queue[fcState.currentIndex]
+    ? words.get(fcState.queue[fcState.currentIndex])
     : undefined;
 
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
+        <p role="alert" className="text-red-500">{error}</p>
+        <button
+          onClick={() => { setError(null); setLoading(true); window.location.reload(); }}
+          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          再読み込み
+        </button>
       </div>
     );
   }
@@ -227,8 +282,10 @@ export default function StudyPage() {
 
       <main className="flex-1 flex flex-col items-center px-4 py-8">
         {/* Mode Switcher */}
-        <div className="flex gap-1 p-1 bg-zinc-200 dark:bg-zinc-800 rounded-lg mb-8">
+        <div className="flex gap-1 p-1 bg-zinc-200 dark:bg-zinc-800 rounded-lg mb-8" role="tablist">
           <button
+            role="tab"
+            aria-selected={mode === "flashcard"}
             onClick={() => handleModeSwitch("flashcard")}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               mode === "flashcard"
@@ -239,6 +296,8 @@ export default function StudyPage() {
             フラッシュカード
           </button>
           <button
+            role="tab"
+            aria-selected={mode === "quiz"}
             onClick={() => handleModeSwitch("quiz")}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               mode === "quiz"
@@ -285,7 +344,7 @@ export default function StudyPage() {
           <>
             <div className="w-full max-w-lg mb-8">
               <div className="flex justify-between text-sm text-zinc-500 mb-2">
-                <span>{sessionStats.reviewed} / {queue.length} カード</span>
+                <span>{sessionStats.reviewed} / {fcState.queue.length} カード</span>
                 <span>
                   正答率:{" "}
                   {sessionStats.reviewed > 0
@@ -297,13 +356,13 @@ export default function StudyPage() {
                 <div
                   className="h-full bg-blue-500 transition-all duration-300 rounded-full"
                   style={{
-                    width: `${queue.length > 0 ? (sessionStats.reviewed / queue.length) * 100 : 0}%`,
+                    width: `${fcState.queue.length > 0 ? (sessionStats.reviewed / fcState.queue.length) * 100 : 0}%`,
                   }}
                 />
               </div>
             </div>
             {currentWord ? (
-              <FlashCard word={currentWord} onScore={handleScore} />
+              <FlashCard key={currentWord.id} word={currentWord} onScore={handleScore} />
             ) : (
               <p className="text-zinc-500">学習する単語がありません</p>
             )}
@@ -315,7 +374,7 @@ export default function StudyPage() {
           </div>
         ) : quizError ? (
           <div className="text-center">
-            <p className="text-red-500 mb-4">{quizError}</p>
+            <p role="alert" className="text-red-500 mb-4">{quizError}</p>
             <button
               onClick={generateQuiz}
               className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"

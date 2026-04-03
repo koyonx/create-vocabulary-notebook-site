@@ -1,7 +1,13 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { GeminiResponse } from "./types";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+function getGeminiClient() {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) {
+    throw new Error("GEMINI_API_KEY が設定されていません。.env.local を確認してください。");
+  }
+  return new GoogleGenerativeAI(key);
+}
 
 const PROMPT = `あなたは語学学習の専門家です。
 提供された画像または動画から、学習すべき重要な単語・フレーズを抽出してください。
@@ -31,6 +37,7 @@ export async function analyzeWithGemini(
   fileBase64: string,
   mimeType: string
 ): Promise<GeminiResponse> {
+  const genAI = getGeminiClient();
   const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro-preview-05-06" });
 
   const result = await model.generateContent([
@@ -46,7 +53,6 @@ export async function analyzeWithGemini(
   const response = result.response;
   const text = response.text();
 
-  // JSONブロックを抽出（```json ... ``` で囲まれている場合に対応）
   const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     throw new Error("Geminiからの応答をパースできませんでした");
@@ -54,4 +60,11 @@ export async function analyzeWithGemini(
 
   const jsonStr = jsonMatch[1] || jsonMatch[0];
   return JSON.parse(jsonStr) as GeminiResponse;
+}
+
+export async function generateQuizWithGemini(prompt: string): Promise<string> {
+  const genAI = getGeminiClient();
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro-preview-05-06" });
+  const result = await model.generateContent(prompt);
+  return result.response.text();
 }

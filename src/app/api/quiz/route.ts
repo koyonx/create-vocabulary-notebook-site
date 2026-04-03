@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+import { generateQuizWithGemini } from "@/lib/gemini";
 
 type QuizRequestWord = {
+  id: string;
   term: string;
   meaning: string;
   isWeak: boolean;
@@ -22,15 +21,13 @@ export async function POST(request: NextRequest) {
 
     const weakWords = words.filter((w) => w.isWeak);
     const targetWords = weakWords.length > 0 ? weakWords : words;
-
-    // 出題する単語を最大10個選択
     const quizTargets = targetWords.slice(0, 10);
 
     const prompt = `あなたは語学学習クイズの作成者です。
 以下の単語リストから4択クイズを作成してください。
 
 ## 出題対象の単語（これらの意味を問うクイズを作成）
-${quizTargets.map((w) => `- ${w.term}: ${w.meaning}`).join("\n")}
+${quizTargets.map((w) => `- [ID:${w.id}] ${w.term}: ${w.meaning}`).join("\n")}
 
 ## 全単語リスト（不正解の選択肢として使用可能）
 ${words.map((w) => `- ${w.term}: ${w.meaning}`).join("\n")}
@@ -40,7 +37,8 @@ ${words.map((w) => `- ${w.term}: ${w.meaning}`).join("\n")}
 {
   "questions": [
     {
-      "questionWord": "出題する単語",
+      "wordId": "出題する単語のID（上記の[ID:xxx]の値をそのまま使用）",
+      "questionWord": "出題する単語（元の表記をそのまま使用）",
       "correctAnswer": "正しい意味",
       "choices": ["選択肢1", "選択肢2", "選択肢3", "選択肢4"],
       "correctIndex": 0
@@ -50,14 +48,14 @@ ${words.map((w) => `- ${w.term}: ${w.meaning}`).join("\n")}
 
 注意事項:
 - 出題対象の各単語について1問ずつ作成してください
+- wordIdは必ず上記の[ID:xxx]の値をそのまま使用してください
+- questionWordは出題対象の単語をそのまま使用してください（変更しないでください）
 - choicesには正解を含めた4つの選択肢を入れてください
 - correctIndexは0始まりで正解の位置を示してください
 - 不正解の選択肢は紛らわしいが明確に異なるものにしてください
 - 選択肢の順序はランダムにしてください`;
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro-preview-05-06" });
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    const text = await generateQuizWithGemini(prompt);
 
     const jsonMatch =
       text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/\{[\s\S]*\}/);
