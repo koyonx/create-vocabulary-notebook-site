@@ -1,5 +1,3 @@
-"use client";
-
 import type { Word } from "@/lib/types";
 
 type Props = {
@@ -33,8 +31,8 @@ export default function WordCard({ word, onDelete }: Props) {
         {onDelete && (
           <button
             onClick={() => onDelete(word.id)}
-            className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-400 hover:text-red-500 p-1"
-            aria-label="削除"
+            className="sm:opacity-0 sm:group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity text-zinc-400 hover:text-red-500 p-1"
+            aria-label={`${word.term}を削除`}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

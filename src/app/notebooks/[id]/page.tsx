@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { getNotebook, saveNotebook } from "@/lib/storage";
@@ -16,21 +16,27 @@ export default function NotebookDetailPage() {
   const [notebook, setNotebook] = useState<Notebook | null>(null);
   const [stats, setStats] = useState<NotebookStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [showStats, setShowStats] = useState(true);
 
-  const loadData = async () => {
-    const [nb, st] = await Promise.all([
-      getNotebook(id),
-      getNotebookStats(id),
-    ]);
-    if (nb) setNotebook(nb);
-    setStats(st);
-    setLoading(false);
-  };
+  const loadData = useCallback(async () => {
+    try {
+      const [nb, st] = await Promise.all([
+        getNotebook(id),
+        getNotebookStats(id),
+      ]);
+      if (nb) setNotebook(nb);
+      setStats(st);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
 
   useEffect(() => {
     loadData();
-  }, [id]);
+  }, [loadData]);
 
   const handleDeleteWord = async (wordId: string) => {
     if (!notebook) return;
@@ -47,6 +53,20 @@ export default function NotebookDetailPage() {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
+        <p role="alert" className="text-red-500">{error}</p>
+        <button
+          onClick={() => { setError(null); setLoading(true); loadData(); }}
+          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          再読み込み
+        </button>
       </div>
     );
   }
@@ -91,12 +111,12 @@ export default function NotebookDetailPage() {
           </p>
         </div>
 
-        {/* Stats Dashboard */}
         {stats && (
           <div className="mb-8">
             <button
               onClick={() => setShowStats(!showStats)}
               className="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-4"
+              aria-expanded={showStats}
             >
               <svg
                 className={`w-4 h-4 transition-transform ${showStats ? "rotate-90" : ""}`}
@@ -113,7 +133,7 @@ export default function NotebookDetailPage() {
               <div className="space-y-4">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <StatsCard
-                    label="今日の復習"
+                    label="要復習"
                     value={stats.dueToday}
                     sub="カード"
                     color="text-orange-600 dark:text-orange-400"
@@ -158,9 +178,9 @@ export default function NotebookDetailPage() {
                       苦手な単語 TOP{stats.weakWords.length}
                     </h3>
                     <div className="space-y-2">
-                      {stats.weakWords.map((w) => (
+                      {stats.weakWords.map((w, i) => (
                         <div
-                          key={w.term}
+                          key={`${w.term}-${i}`}
                           className="flex items-center justify-between text-sm"
                         >
                           <div>

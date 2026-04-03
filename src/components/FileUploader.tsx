@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 
 type Props = {
   onAnalysisComplete: (data: { title: string; words: Array<{
@@ -17,9 +17,17 @@ export default function FileUploader({ onAnalysisComplete }: Props) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const handleFile = useCallback(
     async (file: File) => {
+      if (isAnalyzing) return;
+
+      // 前のリクエストをキャンセル
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       setError(null);
       setFileName(file.name);
       setIsAnalyzing(true);
@@ -31,6 +39,7 @@ export default function FileUploader({ onAnalysisComplete }: Props) {
         const res = await fetch("/api/analyze", {
           method: "POST",
           body: formData,
+          signal: controller.signal,
         });
 
         const data = await res.json();
@@ -41,22 +50,24 @@ export default function FileUploader({ onAnalysisComplete }: Props) {
 
         onAnalysisComplete(data);
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         setError(err instanceof Error ? err.message : "エラーが発生しました");
       } finally {
         setIsAnalyzing(false);
       }
     },
-    [onAnalysisComplete]
+    [onAnalysisComplete, isAnalyzing]
   );
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
+      if (isAnalyzing) return;
       const file = e.dataTransfer.files[0];
       if (file) handleFile(file);
     },
-    [handleFile]
+    [handleFile, isAnalyzing]
   );
 
   const handleChange = useCallback(
@@ -118,13 +129,13 @@ export default function FileUploader({ onAnalysisComplete }: Props) {
             または クリックしてファイルを選択
           </p>
           <p className="text-xs text-zinc-400 mt-1">
-            PNG, JPEG, WebP, GIF, MP4, WebM
+            PNG, JPEG, WebP, GIF, MP4, WebM（20MB以下）
           </p>
         </div>
       )}
 
       {error && (
-        <p className="absolute bottom-3 text-sm text-red-500">{error}</p>
+        <p role="alert" className="absolute bottom-3 text-sm text-red-500">{error}</p>
       )}
     </div>
   );

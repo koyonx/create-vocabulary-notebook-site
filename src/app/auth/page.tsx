@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
+import AuthHeader from "@/components/AuthHeader";
 import Link from "next/link";
 
 export default function AuthPage() {
@@ -42,13 +43,7 @@ export default function AuthPage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-        <div className="max-w-4xl mx-auto px-4 py-4">
-          <Link href="/" className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
-            VocabAI
-          </Link>
-        </div>
-      </header>
+      <AuthHeader />
 
       <main className="flex-1 flex items-center justify-center px-4">
         <div className="w-full max-w-sm">
@@ -93,10 +88,10 @@ export default function AuthPage() {
             </div>
 
             {error && (
-              <p className="text-sm text-red-500">{error}</p>
+              <p role="alert" className="text-sm text-red-500">{error}</p>
             )}
             {success && (
-              <p className="text-sm text-green-600">{success}</p>
+              <p role="status" className="text-sm text-green-600">{success}</p>
             )}
 
             <button

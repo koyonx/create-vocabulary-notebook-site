@@ -1,11 +1,12 @@
-import { getNotebook, getLearningData } from "./storage";
+import { getNotebook, getBatchLearningData } from "./storage";
+import { MASTERED_INTERVAL_DAYS } from "./constants";
 import type { WordLearningData } from "./types";
 
 export type NotebookStats = {
   totalWords: number;
-  mastered: number;       // interval >= 21日
-  learning: number;       // 1回以上復習済み & interval < 21日
-  newWords: number;       // 未学習
+  mastered: number;
+  learning: number;
+  newWords: number;
   averageEaseFactor: number;
   totalReviews: number;
   correctRate: number;
@@ -19,12 +20,15 @@ export async function getNotebookStats(notebookId: string): Promise<NotebookStat
   if (!notebook) return null;
 
   const now = new Date();
-  const learningDataList: (WordLearningData & { term: string; meaning: string })[] = [];
+  const wordIds = notebook.words.map((w) => w.id);
+  const allLearningData = await getBatchLearningData(wordIds);
 
-  for (const word of notebook.words) {
-    const ld = await getLearningData(word.id);
-    learningDataList.push({ ...ld, term: word.term, meaning: word.meaning });
-  }
+  const learningDataList: (WordLearningData & { term: string; meaning: string })[] =
+    allLearningData.map((ld, i) => ({
+      ...ld,
+      term: notebook.words[i].term,
+      meaning: notebook.words[i].meaning,
+    }));
 
   const totalWords = learningDataList.length;
 
@@ -43,7 +47,7 @@ export async function getNotebookStats(notebookId: string): Promise<NotebookStat
 
     if (ld.totalReviews === 0) {
       newWords++;
-    } else if (ld.intervalDays >= 21) {
+    } else if (ld.intervalDays >= MASTERED_INTERVAL_DAYS) {
       mastered++;
     } else {
       learning++;
@@ -60,7 +64,6 @@ export async function getNotebookStats(notebookId: string): Promise<NotebookStat
     }
   }
 
-  // 苦手単語 TOP5
   const weakWords = learningDataList
     .filter((ld) => ld.totalReviews > 0)
     .sort((a, b) => a.easeFactor - b.easeFactor || b.lapses - a.lapses)
@@ -72,7 +75,6 @@ export async function getNotebookStats(notebookId: string): Promise<NotebookStat
       lapses: ld.lapses,
     }));
 
-  // 習熟度分布
   const streakDistribution = [
     { label: "未学習", count: newWords },
     { label: "学習中", count: learning },
@@ -83,7 +85,7 @@ export async function getNotebookStats(notebookId: string): Promise<NotebookStat
     totalWords,
     mastered,
     learning,
-    newWords: newWords,
+    newWords,
     averageEaseFactor: easeCount > 0 ? easeSum / easeCount : 2.5,
     totalReviews,
     correctRate: totalReviews > 0 ? totalCorrect / totalReviews : 0,

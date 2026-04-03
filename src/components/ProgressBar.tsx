@@ -1,5 +1,3 @@
-"use client";
-
 type Segment = {
   label: string;
   count: number;
