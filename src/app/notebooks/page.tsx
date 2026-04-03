@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getNotebooks, deleteNotebook } from "@/lib/storage";
 import type { Notebook } from "@/lib/types";
+import AuthHeader from "@/components/AuthHeader";
 
 export default function NotebooksPage() {
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
@@ -27,19 +28,16 @@ export default function NotebooksPage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/" className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
-            VocabAI
-          </Link>
+      <AuthHeader
+        rightContent={
           <Link
             href="/"
             className="text-sm text-blue-600 hover:text-blue-700 transition-colors"
           >
             + 新規作成
           </Link>
-        </div>
-      </header>
+        }
+      />
 
       <main className="flex-1 max-w-4xl mx-auto px-4 py-8 w-full">
         <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-6">

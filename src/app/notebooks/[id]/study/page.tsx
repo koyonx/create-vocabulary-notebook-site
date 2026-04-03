@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import FlashCard from "@/components/FlashCard";
 import QuizMode from "@/components/QuizMode";
+import AuthHeader from "@/components/AuthHeader";
 import {
   getNotebook,
   getStudyQueue,
@@ -213,19 +214,16 @@ export default function StudyPage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/" className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
-            VocabAI
-          </Link>
+      <AuthHeader
+        rightContent={
           <Link
             href={`/notebooks/${id}`}
             className="text-sm text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
           >
             単語帳に戻る
           </Link>
-        </div>
-      </header>
+        }
+      />
 
       <main className="flex-1 flex flex-col items-center px-4 py-8">
         {/* Mode Switcher */}
