@@ -10,21 +10,32 @@ import WordCard from "@/components/WordCard";
 export default function NotebookDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [notebook, setNotebook] = useState<Notebook | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const nb = getNotebook(id);
-    if (nb) setNotebook(nb);
+    getNotebook(id).then((nb) => {
+      if (nb) setNotebook(nb);
+      setLoading(false);
+    });
   }, [id]);
 
-  const handleDeleteWord = (wordId: string) => {
+  const handleDeleteWord = async (wordId: string) => {
     if (!notebook) return;
     const updated = {
       ...notebook,
       words: notebook.words.filter((w) => w.id !== wordId),
     };
-    saveNotebook(updated);
+    await saveNotebook(updated);
     setNotebook(updated);
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   if (!notebook) {
     return (

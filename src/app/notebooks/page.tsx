@@ -7,15 +7,22 @@ import type { Notebook } from "@/lib/types";
 
 export default function NotebooksPage() {
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadNotebooks = async () => {
+    const nbs = await getNotebooks();
+    setNotebooks(nbs);
+    setLoading(false);
+  };
 
   useEffect(() => {
-    setNotebooks(getNotebooks());
+    loadNotebooks();
   }, []);
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (!confirm("この単語帳を削除しますか？")) return;
-    deleteNotebook(id);
-    setNotebooks(getNotebooks());
+    await deleteNotebook(id);
+    await loadNotebooks();
   };
 
   return (
@@ -39,7 +46,11 @@ export default function NotebooksPage() {
           単語帳一覧
         </h1>
 
-        {notebooks.length === 0 ? (
+        {loading ? (
+          <div className="flex justify-center py-16">
+            <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : notebooks.length === 0 ? (
           <div className="text-center py-16">
             <p className="text-zinc-500 mb-4">まだ単語帳がありません</p>
             <Link

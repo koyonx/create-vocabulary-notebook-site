@@ -11,7 +11,7 @@ export default function Home() {
   const router = useRouter();
 
   const handleAnalysisComplete = useCallback(
-    (data: GeminiResponse) => {
+    async (data: GeminiResponse) => {
       const id = crypto.randomUUID();
       const notebook = {
         id,
@@ -23,7 +23,7 @@ export default function Home() {
         createdAt: new Date().toISOString(),
       };
 
-      saveNotebook(notebook);
+      await saveNotebook(notebook);
       router.push(`/notebooks/${id}`);
     },
     [router]
@@ -31,7 +31,6 @@ export default function Home() {
 
   return (
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      {/* Header */}
       <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
         <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
           <Link href="/" className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
@@ -46,7 +45,6 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Main */}
       <main className="flex-1 flex flex-col items-center justify-center px-4 py-16">
         <div className="w-full max-w-2xl">
           <div className="text-center mb-10">
