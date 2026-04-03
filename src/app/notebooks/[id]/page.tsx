@@ -9,6 +9,7 @@ import type { Notebook } from "@/lib/types";
 import WordCard from "@/components/WordCard";
 import StatsCard from "@/components/StatsCard";
 import ProgressBar from "@/components/ProgressBar";
+import AuthHeader from "@/components/AuthHeader";
 
 export default function NotebookDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -60,12 +61,9 @@ export default function NotebookDetailPage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/" className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
-            VocabAI
-          </Link>
-          <div className="flex gap-3">
+      <AuthHeader
+        rightContent={
+          <>
             <Link
               href="/notebooks"
               className="text-sm text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
@@ -78,9 +76,9 @@ export default function NotebookDetailPage() {
             >
               学習する
             </Link>
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <main className="flex-1 max-w-4xl mx-auto px-4 py-8 w-full">
         <div className="mb-6">
@@ -113,7 +111,6 @@ export default function NotebookDetailPage() {
 
             {showStats && (
               <div className="space-y-4">
-                {/* Stats Cards */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <StatsCard
                     label="今日の復習"
@@ -146,7 +143,6 @@ export default function NotebookDetailPage() {
                   />
                 </div>
 
-                {/* Progress Bar */}
                 <ProgressBar
                   total={stats.totalWords}
                   segments={[
@@ -156,7 +152,6 @@ export default function NotebookDetailPage() {
                   ]}
                 />
 
-                {/* Weak Words */}
                 {stats.weakWords.length > 0 && (
                   <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
                     <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
@@ -192,7 +187,6 @@ export default function NotebookDetailPage() {
           </div>
         )}
 
-        {/* Word List */}
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-3">
           単語一覧
         </h2>

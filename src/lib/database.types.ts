@@ -12,18 +12,21 @@ export type Database = {
       notebooks: {
         Row: {
           id: string;
+          user_id: string | null;
           title: string;
           source_file_url: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
+          user_id?: string | null;
           title: string;
           source_file_url?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
+          user_id?: string | null;
           title?: string;
           source_file_url?: string | null;
           created_at?: string;
@@ -122,6 +125,7 @@ export type Database = {
         Row: {
           id: string;
           word_id: string;
+          user_id: string | null;
           score: number;
           mode: string;
           reviewed_at: string;
@@ -129,6 +133,7 @@ export type Database = {
         Insert: {
           id?: string;
           word_id: string;
+          user_id?: string | null;
           score: number;
           mode: string;
           reviewed_at?: string;
@@ -136,6 +141,7 @@ export type Database = {
         Update: {
           id?: string;
           word_id?: string;
+          user_id?: string | null;
           score?: number;
           mode?: string;
           reviewed_at?: string;

@@ -1,6 +1,6 @@
-import { supabase } from "./supabase";
+import { getSupabase } from "./supabase";
 import { createDefaultLearningData, calculatePriority } from "./sm2";
-import type { Notebook, Word, WordLearningData } from "./types";
+import type { Notebook, WordLearningData } from "./types";
 
 // Supabase接続が有効かチェック
 function isSupabaseConfigured(): boolean {
@@ -8,6 +8,13 @@ function isSupabaseConfigured(): boolean {
     process.env.NEXT_PUBLIC_SUPABASE_URL &&
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   );
+}
+
+async function getCurrentUserId(): Promise<string | null> {
+  if (!isSupabaseConfigured()) return null;
+  const supabase = getSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.user?.id ?? null;
 }
 
 // ============================
@@ -64,10 +71,19 @@ function localSaveLearningData(data: WordLearningData): void {
 // ============================
 
 async function supaGetNotebooks(): Promise<Notebook[]> {
-  const { data: notebooks, error } = await supabase
+  const supabase = getSupabase();
+  const userId = await getCurrentUserId();
+
+  let query = supabase
     .from("notebooks")
     .select("*")
     .order("created_at", { ascending: false });
+
+  if (userId) {
+    query = query.eq("user_id", userId);
+  }
+
+  const { data: notebooks, error } = await query;
 
   if (error) throw error;
   if (!notebooks) return [];
@@ -98,6 +114,7 @@ async function supaGetNotebooks(): Promise<Notebook[]> {
 }
 
 async function supaGetNotebook(id: string): Promise<Notebook | undefined> {
+  const supabase = getSupabase();
   const { data: nb, error } = await supabase
     .from("notebooks")
     .select("*")
@@ -128,14 +145,17 @@ async function supaGetNotebook(id: string): Promise<Notebook | undefined> {
 }
 
 async function supaSaveNotebook(notebook: Notebook): Promise<void> {
+  const supabase = getSupabase();
+  const userId = await getCurrentUserId();
+
   const { error: nbError } = await supabase.from("notebooks").upsert({
     id: notebook.id,
     title: notebook.title,
+    user_id: userId,
     created_at: notebook.createdAt,
   });
   if (nbError) throw nbError;
 
-  // 既存の単語を削除して再挿入
   await supabase.from("words").delete().eq("notebook_id", notebook.id);
 
   if (notebook.words.length > 0) {
@@ -155,11 +175,13 @@ async function supaSaveNotebook(notebook: Notebook): Promise<void> {
 }
 
 async function supaDeleteNotebook(id: string): Promise<void> {
+  const supabase = getSupabase();
   const { error } = await supabase.from("notebooks").delete().eq("id", id);
   if (error) throw error;
 }
 
 async function supaGetLearningData(wordId: string): Promise<WordLearningData> {
+  const supabase = getSupabase();
   const { data, error } = await supabase
     .from("word_learning")
     .select("*")
@@ -182,6 +204,7 @@ async function supaGetLearningData(wordId: string): Promise<WordLearningData> {
 }
 
 async function supaSaveLearningData(data: WordLearningData): Promise<void> {
+  const supabase = getSupabase();
   const { error } = await supabase.from("word_learning").upsert(
     {
       word_id: data.wordId,
@@ -204,8 +227,11 @@ async function supaSaveReviewLog(
   score: number,
   mode: "flashcard" | "quiz"
 ): Promise<void> {
+  const supabase = getSupabase();
+  const userId = await getCurrentUserId();
   await supabase.from("review_logs").insert({
     word_id: wordId,
+    user_id: userId,
     score,
     mode,
   });
@@ -251,7 +277,6 @@ export async function saveReviewLog(
   mode: "flashcard" | "quiz"
 ): Promise<void> {
   if (isSupabaseConfigured()) return supaSaveReviewLog(wordId, score, mode);
-  // localStorageでは復習ログは省略
 }
 
 export async function getStudyQueue(notebookId: string): Promise<string[]> {

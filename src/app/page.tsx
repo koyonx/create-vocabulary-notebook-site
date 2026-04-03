@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback } from "react";
 import FileUploader from "@/components/FileUploader";
+import AuthHeader from "@/components/AuthHeader";
 import { saveNotebook } from "@/lib/storage";
 import type { GeminiResponse } from "@/lib/types";
 import Link from "next/link";
@@ -31,19 +32,16 @@ export default function Home() {
 
   return (
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/" className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
-            VocabAI
-          </Link>
+      <AuthHeader
+        rightContent={
           <Link
             href="/notebooks"
             className="text-sm text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
           >
             単語帳一覧
           </Link>
-        </div>
-      </header>
+        }
+      />
 
       <main className="flex-1 flex flex-col items-center justify-center px-4 py-16">
         <div className="w-full max-w-2xl">
