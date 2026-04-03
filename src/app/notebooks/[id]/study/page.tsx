@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useReducer } from "react";
+import { useEffect, useState, useCallback, useReducer, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import FlashCard from "@/components/FlashCard";
@@ -20,10 +20,12 @@ import type { QuizQuestion } from "@/lib/quiz.types";
 
 type StudyMode = "flashcard" | "quiz";
 
-// #4 fix: useReducerでqueueとindexを一緒に管理し、race conditionを防ぐ
+const MAX_REQUEUE = 3;
+
 type FlashcardState = {
   queue: string[];
   currentIndex: number;
+  requeueCount: Map<string, number>;
 };
 
 type FlashcardAction =
@@ -34,25 +36,39 @@ type FlashcardAction =
 function flashcardReducer(state: FlashcardState, action: FlashcardAction): FlashcardState {
   switch (action.type) {
     case "init":
-      return { queue: action.queue, currentIndex: 0 };
+      return { queue: action.queue, currentIndex: 0, requeueCount: new Map() };
     case "next":
       return { ...state, currentIndex: state.currentIndex + 1 };
-    case "requeue":
+    case "requeue": {
+      const count = state.requeueCount.get(action.wordId) || 0;
+      if (count >= MAX_REQUEUE) {
+        // 上限に達した場合はrequeueせず次へ進む
+        return { ...state, currentIndex: state.currentIndex + 1 };
+      }
+      const newCount = new Map(state.requeueCount);
+      newCount.set(action.wordId, count + 1);
       return {
         queue: [...state.queue, action.wordId],
         currentIndex: state.currentIndex + 1,
+        requeueCount: newCount,
       };
+    }
   }
 }
 
 export default function StudyPage() {
   const { id } = useParams<{ id: string }>();
   const [mode, setMode] = useState<StudyMode>("flashcard");
-  const [fcState, dispatch] = useReducer(flashcardReducer, { queue: [], currentIndex: 0 });
+  const [fcState, dispatch] = useReducer(flashcardReducer, {
+    queue: [],
+    currentIndex: 0,
+    requeueCount: new Map(),
+  });
   const [words, setWords] = useState<Map<string, Word>>(new Map());
   const [allWords, setAllWords] = useState<Word[]>([]);
   const [sessionStats, setSessionStats] = useState({ reviewed: 0, correct: 0 });
   const [isComplete, setIsComplete] = useState(false);
+  const [noDueWords, setNoDueWords] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,6 +76,10 @@ export default function StudyPage() {
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
   const [quizLoading, setQuizLoading] = useState(false);
   const [quizError, setQuizError] = useState<string | null>(null);
+
+  // Ref for stable handleScore callback
+  const fcStateRef = useRef(fcState);
+  fcStateRef.current = fcState;
 
   useEffect(() => {
     (async () => {
@@ -76,10 +96,20 @@ export default function StudyPage() {
         setAllWords(notebook.words);
 
         const studyQueue = await getStudyQueue(id);
-        dispatch({
-          type: "init",
-          queue: studyQueue.length > 0 ? studyQueue : notebook.words.map((w) => w.id),
-        });
+        if (studyQueue.length === 0 && notebook.words.length > 0) {
+          // 全単語が復習期限前 → 新規カードとして投入
+          const allLd = await getBatchLearningData(notebook.words.map((w) => w.id));
+          const hasReviewed = allLd.some((ld) => ld.totalReviews > 0);
+          if (hasReviewed) {
+            // 学習済みで期限前 → 復習不要
+            setNoDueWords(true);
+          } else {
+            // 全て未学習 → 全投入
+            dispatch({ type: "init", queue: notebook.words.map((w) => w.id) });
+          }
+        } else {
+          dispatch({ type: "init", queue: studyQueue });
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "データの読み込みに失敗しました");
       } finally {
@@ -129,6 +159,7 @@ export default function StudyPage() {
     async (newMode: StudyMode) => {
       setMode(newMode);
       setIsComplete(false);
+      setNoDueWords(false);
       setSessionStats({ reviewed: 0, correct: 0 });
 
       if (newMode === "quiz") {
@@ -137,12 +168,11 @@ export default function StudyPage() {
         try {
           const studyQueue = await getStudyQueue(id);
           const notebook = await getNotebook(id);
-          dispatch({
-            type: "init",
-            queue: studyQueue.length > 0
-              ? studyQueue
-              : notebook?.words.map((w) => w.id) || [],
-          });
+          if (studyQueue.length > 0) {
+            dispatch({ type: "init", queue: studyQueue });
+          } else if (notebook) {
+            dispatch({ type: "init", queue: notebook.words.map((w) => w.id) });
+          }
         } catch (err) {
           setError(err instanceof Error ? err.message : "データの読み込みに失敗しました");
         }
@@ -151,9 +181,11 @@ export default function StudyPage() {
     [id, generateQuiz]
   );
 
+  // Stable callback using ref to avoid re-creating on every fcState change
   const handleScore = useCallback(
     async (score: ReviewScore) => {
-      const wordId = fcState.queue[fcState.currentIndex];
+      const state = fcStateRef.current;
+      const wordId = state.queue[state.currentIndex];
       if (!wordId) return;
 
       const learningData = await getLearningData(wordId);
@@ -169,8 +201,7 @@ export default function StudyPage() {
       if (score < 3) {
         dispatch({ type: "requeue", wordId });
       } else {
-        // requeue後のqueue長を確認するため、現在のstateを使う
-        const isLast = fcState.currentIndex + 1 >= fcState.queue.length;
+        const isLast = state.currentIndex + 1 >= state.queue.length;
         if (isLast) {
           setIsComplete(true);
         } else {
@@ -178,16 +209,14 @@ export default function StudyPage() {
         }
       }
     },
-    [fcState]
+    [] // stable: uses ref
   );
 
-  // #7 fix: wordIdベースのマッチング
   const handleQuizAnswer = useCallback(
     async (questionIndex: number, isCorrect: boolean) => {
       const question = quizQuestions[questionIndex];
       if (!question) return;
 
-      // wordIdで直接マッチング（Geminiのterm改変に依存しない）
       const wordId = question.wordId;
       const word = wordId ? words.get(wordId) : allWords.find((w) => w.term === question.questionWord);
 
@@ -213,6 +242,7 @@ export default function StudyPage() {
 
   const handleRestart = useCallback(async () => {
     setIsComplete(false);
+    setNoDueWords(false);
     setSessionStats({ reviewed: 0, correct: 0 });
 
     if (mode === "quiz") {
@@ -221,12 +251,11 @@ export default function StudyPage() {
       try {
         const studyQueue = await getStudyQueue(id);
         const notebook = await getNotebook(id);
-        dispatch({
-          type: "init",
-          queue: studyQueue.length > 0
-            ? studyQueue
-            : notebook?.words.map((w) => w.id) || [],
-        });
+        if (studyQueue.length > 0) {
+          dispatch({ type: "init", queue: studyQueue });
+        } else if (notebook) {
+          dispatch({ type: "init", queue: notebook.words.map((w) => w.id) });
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "データの読み込みに失敗しました");
       }
@@ -236,6 +265,8 @@ export default function StudyPage() {
   const currentWord = fcState.queue[fcState.currentIndex]
     ? words.get(fcState.queue[fcState.currentIndex])
     : undefined;
+
+  const canQuiz = allWords.length >= 4;
 
   if (loading) {
     return (
@@ -299,9 +330,13 @@ export default function StudyPage() {
             role="tab"
             aria-selected={mode === "quiz"}
             onClick={() => handleModeSwitch("quiz")}
+            disabled={!canQuiz}
+            title={!canQuiz ? "クイズには4語以上の単語が必要です" : undefined}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               mode === "quiz"
                 ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                : !canQuiz
+                ? "text-zinc-400 dark:text-zinc-600 cursor-not-allowed"
                 : "text-zinc-600 dark:text-zinc-400"
             }`}
           >
@@ -340,11 +375,38 @@ export default function StudyPage() {
               </button>
             </div>
           </div>
+        ) : noDueWords ? (
+          <div className="text-center py-12">
+            <div className="text-4xl mb-4">&#9989;</div>
+            <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100 mb-2">
+              復習する単語はありません
+            </h2>
+            <p className="text-zinc-500 mb-6">
+              全ての単語が復習期限内です。また後で来てください。
+            </p>
+            <div className="flex gap-3 justify-center">
+              <Link
+                href={`/notebooks/${id}`}
+                className="px-6 py-2 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              >
+                単語帳に戻る
+              </Link>
+              <button
+                onClick={() => {
+                  setNoDueWords(false);
+                  dispatch({ type: "init", queue: allWords.map((w) => w.id) });
+                }}
+                className="px-6 py-2 bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-lg hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors"
+              >
+                全単語を復習
+              </button>
+            </div>
+          </div>
         ) : mode === "flashcard" ? (
           <>
             <div className="w-full max-w-lg mb-8">
               <div className="flex justify-between text-sm text-zinc-500 mb-2">
-                <span>{sessionStats.reviewed} / {fcState.queue.length} カード</span>
+                <span>{Math.min(fcState.currentIndex, fcState.queue.length)} / {fcState.queue.length} カード</span>
                 <span>
                   正答率:{" "}
                   {sessionStats.reviewed > 0
@@ -356,7 +418,7 @@ export default function StudyPage() {
                 <div
                   className="h-full bg-blue-500 transition-all duration-300 rounded-full"
                   style={{
-                    width: `${fcState.queue.length > 0 ? (sessionStats.reviewed / fcState.queue.length) * 100 : 0}%`,
+                    width: `${fcState.queue.length > 0 ? (Math.min(fcState.currentIndex, fcState.queue.length) / fcState.queue.length) * 100 : 0}%`,
                   }}
                 />
               </div>

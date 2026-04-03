@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import type { GeminiResponse } from "./types";
+import type { GeminiResponse, GeminiExtractedWord } from "./types";
 
 function getGeminiClient() {
   const key = process.env.GEMINI_API_KEY;
@@ -7,6 +7,51 @@ function getGeminiClient() {
     throw new Error("GEMINI_API_KEY が設定されていません。.env.local を確認してください。");
   }
   return new GoogleGenerativeAI(key);
+}
+
+function extractJson(text: string): string {
+  const fenced = text.match(/```json\s*([\s\S]*?)\s*```/);
+  if (fenced) return fenced[1];
+  // 最初の { から対応する最後の } までをバランスで探す
+  const start = text.indexOf("{");
+  if (start === -1) throw new Error("JSONが見つかりません");
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}") depth--;
+    if (depth === 0) return text.slice(start, i + 1);
+  }
+  throw new Error("JSONが不完全です");
+}
+
+function validateGeminiResponse(data: unknown): GeminiResponse {
+  if (!data || typeof data !== "object") {
+    throw new Error("Geminiの応答が不正です");
+  }
+  const obj = data as Record<string, unknown>;
+  const title = typeof obj.title === "string" ? obj.title : "無題の単語帳";
+
+  if (!Array.isArray(obj.words)) {
+    throw new Error("単語リストが見つかりません");
+  }
+
+  const words: GeminiExtractedWord[] = obj.words
+    .filter((w: unknown): w is Record<string, unknown> =>
+      typeof w === "object" && w !== null && typeof (w as Record<string, unknown>).term === "string"
+    )
+    .map((w: Record<string, unknown>) => ({
+      term: String(w.term),
+      meaning: String(w.meaning || ""),
+      partOfSpeech: String(w.partOfSpeech || ""),
+      exampleSentence: String(w.exampleSentence || ""),
+      context: String(w.context || ""),
+    }));
+
+  if (words.length === 0) {
+    throw new Error("単語を抽出できませんでした");
+  }
+
+  return { title, words };
 }
 
 const PROMPT = `あなたは語学学習の専門家です。
@@ -50,16 +95,10 @@ export async function analyzeWithGemini(
     { text: PROMPT },
   ]);
 
-  const response = result.response;
-  const text = response.text();
-
-  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error("Geminiからの応答をパースできませんでした");
-  }
-
-  const jsonStr = jsonMatch[1] || jsonMatch[0];
-  return JSON.parse(jsonStr) as GeminiResponse;
+  const text = result.response.text();
+  const jsonStr = extractJson(text);
+  const parsed = JSON.parse(jsonStr);
+  return validateGeminiResponse(parsed);
 }
 
 export async function generateQuizWithGemini(prompt: string): Promise<string> {

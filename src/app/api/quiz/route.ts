@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateQuizWithGemini } from "@/lib/gemini";
+import type { QuizQuestion } from "@/lib/quiz.types";
 
 type QuizRequestWord = {
   id: string;
@@ -8,17 +9,81 @@ type QuizRequestWord = {
   isWeak: boolean;
 };
 
+function validateQuizResponse(
+  data: unknown,
+  validWordIds: Set<string>
+): { questions: QuizQuestion[] } {
+  if (!data || typeof data !== "object") {
+    throw new Error("クイズデータが不正です");
+  }
+  const obj = data as Record<string, unknown>;
+  if (!Array.isArray(obj.questions) || obj.questions.length === 0) {
+    throw new Error("クイズの問題が生成されませんでした");
+  }
+
+  const questions: QuizQuestion[] = [];
+  for (const q of obj.questions) {
+    if (!q || typeof q !== "object") continue;
+    const qObj = q as Record<string, unknown>;
+
+    const wordId = typeof qObj.wordId === "string" ? qObj.wordId : "";
+    const questionWord = typeof qObj.questionWord === "string" ? qObj.questionWord : "";
+    const correctAnswer = typeof qObj.correctAnswer === "string" ? qObj.correctAnswer : "";
+    const choices = Array.isArray(qObj.choices)
+      ? qObj.choices.filter((c): c is string => typeof c === "string")
+      : [];
+    const correctIndex = typeof qObj.correctIndex === "number" ? qObj.correctIndex : 0;
+
+    if (!questionWord || choices.length < 2) continue;
+
+    // 選択肢が4未満なら正解を含めて補完
+    while (choices.length < 4) {
+      choices.push(correctAnswer || questionWord);
+    }
+
+    questions.push({
+      wordId: validWordIds.has(wordId) ? wordId : "",
+      questionWord,
+      correctAnswer,
+      choices: choices.slice(0, 4),
+      correctIndex: Math.min(Math.max(0, correctIndex), 3),
+    });
+  }
+
+  if (questions.length === 0) {
+    throw new Error("有効なクイズ問題を生成できませんでした");
+  }
+
+  return { questions };
+}
+
+function extractJson(text: string): string {
+  const fenced = text.match(/```json\s*([\s\S]*?)\s*```/);
+  if (fenced) return fenced[1];
+  const start = text.indexOf("{");
+  if (start === -1) throw new Error("JSONが見つかりません");
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}") depth--;
+    if (depth === 0) return text.slice(start, i + 1);
+  }
+  throw new Error("JSONが不完全です");
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const { words } = (await request.json()) as { words: QuizRequestWord[] };
+    const body = await request.json();
+    const words: QuizRequestWord[] = Array.isArray(body?.words) ? body.words : [];
 
-    if (!words || words.length < 4) {
+    if (words.length < 4) {
       return NextResponse.json(
         { error: "クイズ生成には最低4つの単語が必要です" },
         { status: 400 }
       );
     }
 
+    const validWordIds = new Set(words.map((w) => w.id));
     const weakWords = words.filter((w) => w.isWeak);
     const targetWords = weakWords.length > 0 ? weakWords : words;
     const quizTargets = targetWords.slice(0, 10);
@@ -56,17 +121,11 @@ ${words.map((w) => `- ${w.term}: ${w.meaning}`).join("\n")}
 - 選択肢の順序はランダムにしてください`;
 
     const text = await generateQuizWithGemini(prompt);
+    const jsonStr = extractJson(text);
+    const parsed = JSON.parse(jsonStr);
+    const validated = validateQuizResponse(parsed, validWordIds);
 
-    const jsonMatch =
-      text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error("クイズの生成に失敗しました");
-    }
-
-    const jsonStr = jsonMatch[1] || jsonMatch[0];
-    const quizData = JSON.parse(jsonStr);
-
-    return NextResponse.json(quizData);
+    return NextResponse.json(validated);
   } catch (error) {
     console.error("Quiz generation error:", error);
     return NextResponse.json(

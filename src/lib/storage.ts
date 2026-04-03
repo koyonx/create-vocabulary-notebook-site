@@ -16,6 +16,13 @@ async function getCurrentUserId(): Promise<string | null> {
   return session?.user?.id ?? null;
 }
 
+// #1 fix: Supabase設定済み + 未ログイン → localStorageにフォールバック
+async function shouldUseSupabase(): Promise<boolean> {
+  if (!isSupabaseConfigured()) return false;
+  const userId = await getCurrentUserId();
+  return userId !== null;
+}
+
 // ============================
 // localStorage フォールバック
 // ============================
@@ -23,10 +30,27 @@ async function getCurrentUserId(): Promise<string | null> {
 const NOTEBOOKS_KEY = "vocab-notebooks";
 const LEARNING_KEY = "vocab-learning";
 
+function safeJsonParse<T>(raw: string | null, fallback: T): T {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function safeLocalStorageSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    console.error("localStorage write failed:", e);
+    throw new Error("ストレージの容量が不足しています。不要な単語帳を削除してください。");
+  }
+}
+
 function localGetNotebooks(): Notebook[] {
   if (typeof window === "undefined") return [];
-  const raw = localStorage.getItem(NOTEBOOKS_KEY);
-  return raw ? JSON.parse(raw) : [];
+  return safeJsonParse(localStorage.getItem(NOTEBOOKS_KEY), []);
 }
 
 function localGetNotebook(id: string): Notebook | undefined {
@@ -38,18 +62,17 @@ function localSaveNotebook(notebook: Notebook): void {
   const idx = notebooks.findIndex((n) => n.id === notebook.id);
   if (idx >= 0) notebooks[idx] = notebook;
   else notebooks.push(notebook);
-  localStorage.setItem(NOTEBOOKS_KEY, JSON.stringify(notebooks));
+  safeLocalStorageSet(NOTEBOOKS_KEY, JSON.stringify(notebooks));
 }
 
 function localDeleteNotebook(id: string): void {
   const notebooks = localGetNotebooks().filter((n) => n.id !== id);
-  localStorage.setItem(NOTEBOOKS_KEY, JSON.stringify(notebooks));
+  safeLocalStorageSet(NOTEBOOKS_KEY, JSON.stringify(notebooks));
 }
 
 function localGetAllLearningData(): WordLearningData[] {
   if (typeof window === "undefined") return [];
-  const raw = localStorage.getItem(LEARNING_KEY);
-  return raw ? JSON.parse(raw) : [];
+  return safeJsonParse(localStorage.getItem(LEARNING_KEY), []);
 }
 
 function localGetLearningData(wordId: string): WordLearningData {
@@ -59,10 +82,8 @@ function localGetLearningData(wordId: string): WordLearningData {
 
 function localGetBatchLearningData(wordIds: string[]): WordLearningData[] {
   const all = localGetAllLearningData();
-  return wordIds.map((id) => {
-    const existing = all.find((l) => l.wordId === id);
-    return existing || createDefaultLearningData(id);
-  });
+  const map = new Map(all.map((l) => [l.wordId, l]));
+  return wordIds.map((id) => map.get(id) || createDefaultLearningData(id));
 }
 
 function localSaveLearningData(data: WordLearningData): void {
@@ -70,7 +91,7 @@ function localSaveLearningData(data: WordLearningData): void {
   const idx = all.findIndex((l) => l.wordId === data.wordId);
   if (idx >= 0) all[idx] = data;
   else all.push(data);
-  localStorage.setItem(LEARNING_KEY, JSON.stringify(all));
+  safeLocalStorageSet(LEARNING_KEY, JSON.stringify(all));
 }
 
 // ============================
@@ -81,20 +102,15 @@ async function supaGetNotebooks(): Promise<Notebook[]> {
   const supabase = getSupabase();
   const userId = await getCurrentUserId();
 
-  let query = supabase
+  const { data: notebooks, error } = await supabase
     .from("notebooks")
     .select("*")
+    .eq("user_id", userId!)
     .order("created_at", { ascending: false });
 
-  if (userId) {
-    query = query.eq("user_id", userId);
-  }
-
-  const { data: notebooks, error } = await query;
   if (error) throw error;
   if (!notebooks || notebooks.length === 0) return [];
 
-  // N+1解消: 全notebookのwordsを一括取得
   const notebookIds = notebooks.map((nb) => nb.id);
   const { data: allWords } = await supabase
     .from("words")
@@ -155,10 +171,10 @@ async function supaGetNotebook(id: string): Promise<Notebook | undefined> {
   };
 }
 
-// #1 fix: diff-based save to preserve word_learning data
 async function supaSaveNotebook(notebook: Notebook): Promise<void> {
   const supabase = getSupabase();
   const userId = await getCurrentUserId();
+  if (!userId) throw new Error("保存するにはログインが必要です");
 
   const { error: nbError } = await supabase.from("notebooks").upsert({
     id: notebook.id,
@@ -168,7 +184,6 @@ async function supaSaveNotebook(notebook: Notebook): Promise<void> {
   });
   if (nbError) throw nbError;
 
-  // 既存の単語IDを取得
   const { data: existingWords } = await supabase
     .from("words")
     .select("id")
@@ -177,13 +192,11 @@ async function supaSaveNotebook(notebook: Notebook): Promise<void> {
   const existingIds = new Set((existingWords || []).map((w) => w.id));
   const newIds = new Set(notebook.words.map((w) => w.id));
 
-  // 削除された単語のみ削除（学習データは CASCADE で消えるが、変更なしの単語は保持）
   const toDelete = [...existingIds].filter((id) => !newIds.has(id));
   if (toDelete.length > 0) {
     await supabase.from("words").delete().in("id", toDelete);
   }
 
-  // 新規 or 更新の単語をupsert
   if (notebook.words.length > 0) {
     const { error: wError } = await supabase.from("words").upsert(
       notebook.words.map((w) => ({
@@ -229,7 +242,6 @@ async function supaGetLearningData(wordId: string): Promise<WordLearningData> {
   };
 }
 
-// #6 fix: batch fetch learning data
 async function supaGetBatchLearningData(wordIds: string[]): Promise<WordLearningData[]> {
   if (wordIds.length === 0) return [];
   const supabase = getSupabase();
@@ -285,6 +297,7 @@ async function supaSaveReviewLog(
 ): Promise<void> {
   const supabase = getSupabase();
   const userId = await getCurrentUserId();
+  if (!userId) return;
   const { error } = await supabase.from("review_logs").insert({
     word_id: wordId,
     user_id: userId,
@@ -299,37 +312,37 @@ async function supaSaveReviewLog(
 // ============================
 
 export async function getNotebooks(): Promise<Notebook[]> {
-  if (isSupabaseConfigured()) return supaGetNotebooks();
+  if (await shouldUseSupabase()) return supaGetNotebooks();
   return localGetNotebooks();
 }
 
 export async function getNotebook(id: string): Promise<Notebook | undefined> {
-  if (isSupabaseConfigured()) return supaGetNotebook(id);
+  if (await shouldUseSupabase()) return supaGetNotebook(id);
   return localGetNotebook(id);
 }
 
 export async function saveNotebook(notebook: Notebook): Promise<void> {
-  if (isSupabaseConfigured()) return supaSaveNotebook(notebook);
+  if (await shouldUseSupabase()) return supaSaveNotebook(notebook);
   localSaveNotebook(notebook);
 }
 
 export async function deleteNotebook(id: string): Promise<void> {
-  if (isSupabaseConfigured()) return supaDeleteNotebook(id);
+  if (await shouldUseSupabase()) return supaDeleteNotebook(id);
   localDeleteNotebook(id);
 }
 
 export async function getLearningData(wordId: string): Promise<WordLearningData> {
-  if (isSupabaseConfigured()) return supaGetLearningData(wordId);
+  if (await shouldUseSupabase()) return supaGetLearningData(wordId);
   return localGetLearningData(wordId);
 }
 
 export async function getBatchLearningData(wordIds: string[]): Promise<WordLearningData[]> {
-  if (isSupabaseConfigured()) return supaGetBatchLearningData(wordIds);
+  if (await shouldUseSupabase()) return supaGetBatchLearningData(wordIds);
   return localGetBatchLearningData(wordIds);
 }
 
 export async function saveLearningData(data: WordLearningData): Promise<void> {
-  if (isSupabaseConfigured()) return supaSaveLearningData(data);
+  if (await shouldUseSupabase()) return supaSaveLearningData(data);
   localSaveLearningData(data);
 }
 
@@ -338,7 +351,7 @@ export async function saveReviewLog(
   score: number,
   mode: "flashcard" | "quiz"
 ): Promise<void> {
-  if (isSupabaseConfigured()) return supaSaveReviewLog(wordId, score, mode);
+  if (await shouldUseSupabase()) return supaSaveReviewLog(wordId, score, mode);
 }
 
 export async function getStudyQueue(notebookId: string): Promise<string[]> {
