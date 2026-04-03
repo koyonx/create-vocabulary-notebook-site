@@ -1,166 +1,296 @@
-// Phase 1: ローカルストレージベースの永続化
-// Phase 2以降でSupabaseに置き換え
+import { getSupabase } from "./supabase";
+import { createDefaultLearningData, calculatePriority } from "./sm2";
+import type { Notebook, WordLearningData } from "./types";
 
-import type { Notebook, WordLearningData, ReviewScore } from "./types";
+// Supabase接続が有効かチェック
+function isSupabaseConfigured(): boolean {
+  return !!(
+    process.env.NEXT_PUBLIC_SUPABASE_URL &&
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  );
+}
+
+async function getCurrentUserId(): Promise<string | null> {
+  if (!isSupabaseConfigured()) return null;
+  const supabase = getSupabase();
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.user?.id ?? null;
+}
+
+// ============================
+// localStorage フォールバック
+// ============================
 
 const NOTEBOOKS_KEY = "vocab-notebooks";
 const LEARNING_KEY = "vocab-learning";
 
-// --- Notebook CRUD ---
-
-export function getNotebooks(): Notebook[] {
+function localGetNotebooks(): Notebook[] {
   if (typeof window === "undefined") return [];
   const raw = localStorage.getItem(NOTEBOOKS_KEY);
   return raw ? JSON.parse(raw) : [];
 }
 
-export function getNotebook(id: string): Notebook | undefined {
-  return getNotebooks().find((n) => n.id === id);
+function localGetNotebook(id: string): Notebook | undefined {
+  return localGetNotebooks().find((n) => n.id === id);
 }
 
-export function saveNotebook(notebook: Notebook): void {
-  const notebooks = getNotebooks();
+function localSaveNotebook(notebook: Notebook): void {
+  const notebooks = localGetNotebooks();
   const idx = notebooks.findIndex((n) => n.id === notebook.id);
-  if (idx >= 0) {
-    notebooks[idx] = notebook;
-  } else {
-    notebooks.push(notebook);
-  }
+  if (idx >= 0) notebooks[idx] = notebook;
+  else notebooks.push(notebook);
   localStorage.setItem(NOTEBOOKS_KEY, JSON.stringify(notebooks));
 }
 
-export function deleteNotebook(id: string): void {
-  const notebooks = getNotebooks().filter((n) => n.id !== id);
+function localDeleteNotebook(id: string): void {
+  const notebooks = localGetNotebooks().filter((n) => n.id !== id);
   localStorage.setItem(NOTEBOOKS_KEY, JSON.stringify(notebooks));
-  // 関連する学習データも削除
-  const learning = getAllLearningData().filter(
-    (l) => !getNotebook(id)?.words.some((w) => w.id === l.wordId)
-  );
-  localStorage.setItem(LEARNING_KEY, JSON.stringify(learning));
 }
 
-// --- Learning Data (SM-2) ---
-
-export function getAllLearningData(): WordLearningData[] {
+function localGetAllLearningData(): WordLearningData[] {
   if (typeof window === "undefined") return [];
   const raw = localStorage.getItem(LEARNING_KEY);
   return raw ? JSON.parse(raw) : [];
 }
 
-export function getLearningData(wordId: string): WordLearningData {
-  const all = getAllLearningData();
-  const existing = all.find((l) => l.wordId === wordId);
-  if (existing) return existing;
-
-  return {
-    wordId,
-    easeFactor: 2.5,
-    intervalDays: 0,
-    repetition: 0,
-    lapses: 0,
-    totalReviews: 0,
-    correctCount: 0,
-    nextReviewAt: new Date().toISOString(),
-    lastReviewedAt: null,
-  };
+function localGetLearningData(wordId: string): WordLearningData {
+  const existing = localGetAllLearningData().find((l) => l.wordId === wordId);
+  return existing || createDefaultLearningData(wordId);
 }
 
-export function saveLearningData(data: WordLearningData): void {
-  const all = getAllLearningData();
+function localSaveLearningData(data: WordLearningData): void {
+  const all = localGetAllLearningData();
   const idx = all.findIndex((l) => l.wordId === data.wordId);
-  if (idx >= 0) {
-    all[idx] = data;
-  } else {
-    all.push(data);
-  }
+  if (idx >= 0) all[idx] = data;
+  else all.push(data);
   localStorage.setItem(LEARNING_KEY, JSON.stringify(all));
 }
 
-// --- SM-2 Algorithm ---
+// ============================
+// Supabase 実装
+// ============================
 
-export function updateSM2(
-  data: WordLearningData,
-  score: ReviewScore
-): WordLearningData {
-  const now = new Date();
-  let { easeFactor, intervalDays, repetition, lapses, totalReviews, correctCount } = data;
+async function supaGetNotebooks(): Promise<Notebook[]> {
+  const supabase = getSupabase();
+  const userId = await getCurrentUserId();
 
-  totalReviews += 1;
+  let query = supabase
+    .from("notebooks")
+    .select("*")
+    .order("created_at", { ascending: false });
 
-  if (score < 3) {
-    // 不正解: リセット
-    repetition = 0;
-    intervalDays = 1;
-    lapses += 1;
-  } else {
-    // 正解
-    correctCount += 1;
-    if (repetition === 0) {
-      intervalDays = 1;
-    } else if (repetition === 1) {
-      intervalDays = 6;
-    } else {
-      intervalDays = Math.round(intervalDays * easeFactor);
-    }
-    repetition += 1;
+  if (userId) {
+    query = query.eq("user_id", userId);
   }
 
-  // easeFactor更新
-  easeFactor += 0.1 - (5 - score) * (0.08 + (5 - score) * 0.02);
-  easeFactor = Math.max(1.3, easeFactor);
+  const { data: notebooks, error } = await query;
 
-  const nextReview = new Date(now.getTime() + intervalDays * 24 * 60 * 60 * 1000);
+  if (error) throw error;
+  if (!notebooks) return [];
+
+  const results: Notebook[] = [];
+  for (const nb of notebooks) {
+    const { data: words } = await supabase
+      .from("words")
+      .select("*")
+      .eq("notebook_id", nb.id)
+      .order("created_at");
+
+    results.push({
+      id: nb.id,
+      title: nb.title,
+      createdAt: nb.created_at,
+      words: (words || []).map((w) => ({
+        id: w.id,
+        term: w.term,
+        meaning: w.meaning,
+        partOfSpeech: w.part_of_speech,
+        exampleSentence: w.example_sentence,
+        context: w.context,
+      })),
+    });
+  }
+  return results;
+}
+
+async function supaGetNotebook(id: string): Promise<Notebook | undefined> {
+  const supabase = getSupabase();
+  const { data: nb, error } = await supabase
+    .from("notebooks")
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  if (error || !nb) return undefined;
+
+  const { data: words } = await supabase
+    .from("words")
+    .select("*")
+    .eq("notebook_id", id)
+    .order("created_at");
 
   return {
-    ...data,
-    easeFactor,
-    intervalDays,
-    repetition,
-    lapses,
-    totalReviews,
-    correctCount,
-    nextReviewAt: nextReview.toISOString(),
-    lastReviewedAt: now.toISOString(),
+    id: nb.id,
+    title: nb.title,
+    createdAt: nb.created_at,
+    words: (words || []).map((w) => ({
+      id: w.id,
+      term: w.term,
+      meaning: w.meaning,
+      partOfSpeech: w.part_of_speech,
+      exampleSentence: w.example_sentence,
+      context: w.context,
+    })),
   };
 }
 
-// --- Study Session: 優先度に基づく出題順 ---
+async function supaSaveNotebook(notebook: Notebook): Promise<void> {
+  const supabase = getSupabase();
+  const userId = await getCurrentUserId();
 
-export function getStudyQueue(notebookId: string): string[] {
-  const notebook = getNotebook(notebookId);
+  const { error: nbError } = await supabase.from("notebooks").upsert({
+    id: notebook.id,
+    title: notebook.title,
+    user_id: userId,
+    created_at: notebook.createdAt,
+  });
+  if (nbError) throw nbError;
+
+  await supabase.from("words").delete().eq("notebook_id", notebook.id);
+
+  if (notebook.words.length > 0) {
+    const { error: wError } = await supabase.from("words").insert(
+      notebook.words.map((w) => ({
+        id: w.id,
+        notebook_id: notebook.id,
+        term: w.term,
+        meaning: w.meaning,
+        part_of_speech: w.partOfSpeech,
+        example_sentence: w.exampleSentence,
+        context: w.context,
+      }))
+    );
+    if (wError) throw wError;
+  }
+}
+
+async function supaDeleteNotebook(id: string): Promise<void> {
+  const supabase = getSupabase();
+  const { error } = await supabase.from("notebooks").delete().eq("id", id);
+  if (error) throw error;
+}
+
+async function supaGetLearningData(wordId: string): Promise<WordLearningData> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("word_learning")
+    .select("*")
+    .eq("word_id", wordId)
+    .single();
+
+  if (error || !data) return createDefaultLearningData(wordId);
+
+  return {
+    wordId: data.word_id,
+    easeFactor: data.ease_factor,
+    intervalDays: data.interval_days,
+    repetition: data.repetition,
+    lapses: data.lapses,
+    totalReviews: data.total_reviews,
+    correctCount: data.correct_count,
+    nextReviewAt: data.next_review_at,
+    lastReviewedAt: data.last_reviewed_at,
+  };
+}
+
+async function supaSaveLearningData(data: WordLearningData): Promise<void> {
+  const supabase = getSupabase();
+  const { error } = await supabase.from("word_learning").upsert(
+    {
+      word_id: data.wordId,
+      ease_factor: data.easeFactor,
+      interval_days: data.intervalDays,
+      repetition: data.repetition,
+      lapses: data.lapses,
+      total_reviews: data.totalReviews,
+      correct_count: data.correctCount,
+      next_review_at: data.nextReviewAt,
+      last_reviewed_at: data.lastReviewedAt,
+    },
+    { onConflict: "word_id" }
+  );
+  if (error) throw error;
+}
+
+async function supaSaveReviewLog(
+  wordId: string,
+  score: number,
+  mode: "flashcard" | "quiz"
+): Promise<void> {
+  const supabase = getSupabase();
+  const userId = await getCurrentUserId();
+  await supabase.from("review_logs").insert({
+    word_id: wordId,
+    user_id: userId,
+    score,
+    mode,
+  });
+}
+
+// ============================
+// 統合エクスポート（async API）
+// ============================
+
+export async function getNotebooks(): Promise<Notebook[]> {
+  if (isSupabaseConfigured()) return supaGetNotebooks();
+  return localGetNotebooks();
+}
+
+export async function getNotebook(id: string): Promise<Notebook | undefined> {
+  if (isSupabaseConfigured()) return supaGetNotebook(id);
+  return localGetNotebook(id);
+}
+
+export async function saveNotebook(notebook: Notebook): Promise<void> {
+  if (isSupabaseConfigured()) return supaSaveNotebook(notebook);
+  localSaveNotebook(notebook);
+}
+
+export async function deleteNotebook(id: string): Promise<void> {
+  if (isSupabaseConfigured()) return supaDeleteNotebook(id);
+  localDeleteNotebook(id);
+}
+
+export async function getLearningData(wordId: string): Promise<WordLearningData> {
+  if (isSupabaseConfigured()) return supaGetLearningData(wordId);
+  return localGetLearningData(wordId);
+}
+
+export async function saveLearningData(data: WordLearningData): Promise<void> {
+  if (isSupabaseConfigured()) return supaSaveLearningData(data);
+  localSaveLearningData(data);
+}
+
+export async function saveReviewLog(
+  wordId: string,
+  score: number,
+  mode: "flashcard" | "quiz"
+): Promise<void> {
+  if (isSupabaseConfigured()) return supaSaveReviewLog(wordId, score, mode);
+}
+
+export async function getStudyQueue(notebookId: string): Promise<string[]> {
+  const notebook = await getNotebook(notebookId);
   if (!notebook) return [];
 
   const now = new Date();
+  const priorities: { wordId: string; priority: number }[] = [];
 
-  type WordPriority = { wordId: string; priority: number };
-
-  const priorities: WordPriority[] = notebook.words.map((word) => {
-    const ld = getLearningData(word.id);
-    const nextReview = new Date(ld.nextReviewAt);
-    const overdueDays = (now.getTime() - nextReview.getTime()) / (1000 * 60 * 60 * 24);
-
-    // 未復習のものはoverdueDays=0として扱う
-    let baseWeight = 1;
-    if (overdueDays > 0) {
-      baseWeight = 1 + overdueDays;
-    } else if (ld.totalReviews === 0) {
-      // 新規カード: 優先度やや低め
-      baseWeight = 0.5;
-    } else {
-      // まだ復習期限前: スキップ（優先度0）
-      baseWeight = 0;
-    }
-
-    // 苦手ブースト（easeFactorが低いほど高い）
-    const difficultyBoost = Math.max(1, 3.5 - ld.easeFactor);
-
-    // 忘却ブースト
-    const lapseBoost = 1 + ld.lapses * 0.3;
-
-    const priority = baseWeight * difficultyBoost * lapseBoost;
-
-    return { wordId: word.id, priority };
-  });
+  for (const word of notebook.words) {
+    const ld = await getLearningData(word.id);
+    const priority = calculatePriority(ld, now);
+    priorities.push({ wordId: word.id, priority });
+  }
 
   return priorities
     .filter((p) => p.priority > 0)

@@ -4,42 +4,51 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getNotebooks, deleteNotebook } from "@/lib/storage";
 import type { Notebook } from "@/lib/types";
+import AuthHeader from "@/components/AuthHeader";
 
 export default function NotebooksPage() {
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadNotebooks = async () => {
+    const nbs = await getNotebooks();
+    setNotebooks(nbs);
+    setLoading(false);
+  };
 
   useEffect(() => {
-    setNotebooks(getNotebooks());
+    loadNotebooks();
   }, []);
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (!confirm("この単語帳を削除しますか？")) return;
-    deleteNotebook(id);
-    setNotebooks(getNotebooks());
+    await deleteNotebook(id);
+    await loadNotebooks();
   };
 
   return (
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950">
-      <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/" className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
-            VocabAI
-          </Link>
+      <AuthHeader
+        rightContent={
           <Link
             href="/"
             className="text-sm text-blue-600 hover:text-blue-700 transition-colors"
           >
             + 新規作成
           </Link>
-        </div>
-      </header>
+        }
+      />
 
       <main className="flex-1 max-w-4xl mx-auto px-4 py-8 w-full">
         <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-6">
           単語帳一覧
         </h1>
 
-        {notebooks.length === 0 ? (
+        {loading ? (
+          <div className="flex justify-center py-16">
+            <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : notebooks.length === 0 ? (
           <div className="text-center py-16">
             <p className="text-zinc-500 mb-4">まだ単語帳がありません</p>
             <Link
