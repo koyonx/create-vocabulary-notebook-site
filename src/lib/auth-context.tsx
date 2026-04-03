@@ -34,12 +34,17 @@ function isSupabaseConfigured(): boolean {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  // SSRと初期クライアントレンダリングで同じ値にするためfalseスタート
+  const [mounted, setMounted] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const isSupabaseEnabled = isSupabaseConfigured();
+
+  const isSupabaseEnabled = mounted && isSupabaseConfigured();
 
   useEffect(() => {
-    if (!isSupabaseEnabled) {
+    setMounted(true);
+
+    if (!isSupabaseConfigured()) {
       setLoading(false);
       return;
     }
@@ -58,24 +63,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     return () => subscription.unsubscribe();
-  }, [isSupabaseEnabled]);
+  }, []);
 
   const signIn = async (email: string, password: string) => {
-    if (!isSupabaseEnabled) return { error: "Supabaseが設定されていません" };
+    if (!isSupabaseConfigured()) return { error: "Supabaseが設定されていません" };
     const supabase = getSupabase();
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error: error?.message ?? null };
   };
 
   const signUp = async (email: string, password: string) => {
-    if (!isSupabaseEnabled) return { error: "Supabaseが設定されていません" };
+    if (!isSupabaseConfigured()) return { error: "Supabaseが設定されていません" };
     const supabase = getSupabase();
     const { error } = await supabase.auth.signUp({ email, password });
     return { error: error?.message ?? null };
   };
 
   const signOut = async () => {
-    if (!isSupabaseEnabled) return;
+    if (!isSupabaseConfigured()) return;
     const supabase = getSupabase();
     await supabase.auth.signOut();
   };

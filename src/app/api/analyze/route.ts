@@ -25,11 +25,16 @@ export async function POST(request: NextRequest) {
       "image/gif",
       "video/mp4",
       "video/webm",
+      "audio/mpeg",
+      "audio/mp3",
+      "audio/wav",
+      "audio/ogg",
+      "application/pdf",
     ];
 
     if (!allowedTypes.includes(file.type)) {
       return NextResponse.json(
-        { error: "対応していないファイル形式です。画像（PNG, JPEG, WebP, GIF）または動画（MP4, WebM）をアップロードしてください" },
+        { error: "対応していないファイル形式です。画像・動画・音声・PDFをアップロードしてください" },
         { status: 400 }
       );
     }

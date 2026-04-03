@@ -1,12 +1,18 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { GeminiResponse, GeminiExtractedWord } from "./types";
 
+const DEFAULT_MODEL = "gemini-2.5-flash";
+
 function getGeminiClient() {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     throw new Error("GEMINI_API_KEY が設定されていません。.env.local を確認してください。");
   }
   return new GoogleGenerativeAI(key);
+}
+
+function getModelName(): string {
+  return process.env.GEMINI_MODEL || DEFAULT_MODEL;
 }
 
 function extractJson(text: string): string {
@@ -55,7 +61,8 @@ function validateGeminiResponse(data: unknown): GeminiResponse {
 }
 
 const PROMPT = `あなたは語学学習の専門家です。
-提供された画像または動画から、学習すべき重要な単語・フレーズを抽出してください。
+提供されたファイル（画像、動画、PDF、音声など）から、学習すべき重要な単語・フレーズを抽出してください。
+音声の場合はまず内容を聞き取り、PDFの場合はテキストを読み取ってから単語を抽出してください。
 
 以下のJSON形式で出力してください。必ずJSON形式のみで返答し、他のテキストは含めないでください。
 
@@ -67,7 +74,7 @@ const PROMPT = `あなたは語学学習の専門家です。
       "meaning": "日本語での意味",
       "partOfSpeech": "品詞（noun, verb, adjective, adverb, phrase など）",
       "exampleSentence": "その単語を使った例文",
-      "context": "画像/動画内でどこに出現したかの説明"
+      "context": "ファイル内でどこに出現したかの説明（ページ番号、時間、位置など）"
     }
   ]
 }
@@ -83,7 +90,7 @@ export async function analyzeWithGemini(
   mimeType: string
 ): Promise<GeminiResponse> {
   const genAI = getGeminiClient();
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro-preview-05-06" });
+  const model = genAI.getGenerativeModel({ model: getModelName() });
 
   const result = await model.generateContent([
     {
@@ -103,7 +110,7 @@ export async function analyzeWithGemini(
 
 export async function generateQuizWithGemini(prompt: string): Promise<string> {
   const genAI = getGeminiClient();
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5-pro-preview-05-06" });
+  const model = genAI.getGenerativeModel({ model: getModelName() });
   const result = await model.generateContent(prompt);
   return result.response.text();
 }

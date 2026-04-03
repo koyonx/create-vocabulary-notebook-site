@@ -94,7 +94,7 @@ export default function FileUploader({ onAnalysisComplete }: Props) {
     >
       <input
         type="file"
-        accept="image/*,video/mp4,video/webm"
+        accept="image/*,video/mp4,video/webm,audio/mpeg,audio/mp3,audio/wav,audio/ogg,application/pdf"
         onChange={handleChange}
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
         disabled={isAnalyzing}
@@ -129,7 +129,7 @@ export default function FileUploader({ onAnalysisComplete }: Props) {
             または クリックしてファイルを選択
           </p>
           <p className="text-xs text-zinc-400 mt-1">
-            PNG, JPEG, WebP, GIF, MP4, WebM（20MB以下）
+            画像 / 動画 / PDF / 音声（MP3, WAV）— 20MB以下
           </p>
         </div>
       )}

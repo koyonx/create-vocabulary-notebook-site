@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import AuthHeader from "@/components/AuthHeader";
-import Link from "next/link";
 
 export default function AuthPage() {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -105,29 +104,23 @@ export default function AuthPage() {
                 ? "アカウントを作成"
                 : "ログイン"}
             </button>
+
+            <div className="text-center text-sm text-zinc-500 mt-4">
+              <span>{isSignUp ? "すでにアカウントをお持ちですか？" : "アカウントをお持ちでないですか？"}</span>{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSignUp(!isSignUp);
+                  setError(null);
+                  setSuccess(null);
+                }}
+                className="text-blue-600 hover:text-blue-700 font-medium"
+              >
+                {isSignUp ? "ログイン" : "新規登録"}
+              </button>
+            </div>
           </form>
 
-          <p className="text-center text-sm text-zinc-500 mt-6">
-            {isSignUp ? "すでにアカウントをお持ちですか？" : "アカウントをお持ちでないですか？"}{" "}
-            <button
-              onClick={() => {
-                setIsSignUp(!isSignUp);
-                setError(null);
-                setSuccess(null);
-              }}
-              className="text-blue-600 hover:text-blue-700 font-medium"
-            >
-              {isSignUp ? "ログイン" : "新規登録"}
-            </button>
-          </p>
-
-          <p className="text-center text-xs text-zinc-400 mt-4">
-            ログインせずに
-            <Link href="/" className="text-blue-600 hover:text-blue-700">
-              ゲストとして利用
-            </Link>
-            することもできます
-          </p>
         </div>
       </main>
     </div>
