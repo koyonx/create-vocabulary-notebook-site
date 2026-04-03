@@ -3,7 +3,7 @@
 -- 単語帳
 CREATE TABLE notebooks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES auth.users,
+  user_id UUID REFERENCES auth.users NOT NULL,
   title TEXT NOT NULL,
   source_file_url TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
@@ -39,7 +39,7 @@ CREATE TABLE word_learning (
 CREATE TABLE review_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   word_id UUID REFERENCES words ON DELETE CASCADE NOT NULL,
-  user_id UUID REFERENCES auth.users,
+  user_id UUID REFERENCES auth.users NOT NULL,
   score INTEGER CHECK (score BETWEEN 1 AND 5) NOT NULL,
   mode TEXT CHECK (mode IN ('flashcard', 'quiz')) NOT NULL,
   reviewed_at TIMESTAMPTZ DEFAULT now()

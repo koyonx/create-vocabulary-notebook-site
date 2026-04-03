@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { getNotebooks, deleteNotebook } from "@/lib/storage";
 import type { Notebook } from "@/lib/types";
@@ -9,16 +9,22 @@ import AuthHeader from "@/components/AuthHeader";
 export default function NotebooksPage() {
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const loadNotebooks = async () => {
-    const nbs = await getNotebooks();
-    setNotebooks(nbs);
-    setLoading(false);
-  };
+  const loadNotebooks = useCallback(async () => {
+    try {
+      const nbs = await getNotebooks();
+      setNotebooks(nbs);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     loadNotebooks();
-  }, []);
+  }, [loadNotebooks]);
 
   const handleDelete = async (id: string) => {
     if (!confirm("この単語帳を削除しますか？")) return;
@@ -48,6 +54,16 @@ export default function NotebooksPage() {
           <div className="flex justify-center py-16">
             <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
           </div>
+        ) : error ? (
+          <div className="text-center py-16">
+            <p role="alert" className="text-red-500 mb-4">{error}</p>
+            <button
+              onClick={() => { setError(null); setLoading(true); loadNotebooks(); }}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              再読み込み
+            </button>
+          </div>
         ) : notebooks.length === 0 ? (
           <div className="text-center py-16">
             <p className="text-zinc-500 mb-4">まだ単語帳がありません</p>
@@ -74,7 +90,7 @@ export default function NotebooksPage() {
                     {new Date(nb.createdAt).toLocaleDateString("ja-JP")}
                   </p>
                 </Link>
-                <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute top-4 right-4 flex gap-2 sm:opacity-0 sm:group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                   <Link
                     href={`/notebooks/${nb.id}/study`}
                     className="text-xs px-3 py-1 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded-full hover:bg-green-200 dark:hover:bg-green-800 transition-colors"

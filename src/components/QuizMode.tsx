@@ -97,7 +97,7 @@ export default function QuizMode({ questions, onAnswer, onComplete }: Props) {
                 !isAnswered ? "cursor-pointer" : "cursor-default"
               }`}
             >
-              <span className="text-sm font-medium text-zinc-500 mr-2">
+              <span className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mr-2">
                 {String.fromCharCode(65 + idx)}.
               </span>
               <span className="text-zinc-900 dark:text-zinc-100">{choice}</span>
