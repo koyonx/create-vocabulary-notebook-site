@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { getNotebook, saveNotebook } from "@/lib/storage";
+import { getNotebook, saveNotebook, getBatchLearningData, getReviewHistory } from "@/lib/storage";
+import CalendarHeatmap from "@/components/CalendarHeatmap";
 import { getNotebookStats, type NotebookStats } from "@/lib/stats";
-import type { Notebook, Word } from "@/lib/types";
+import type { Notebook, Word, WordLearningData } from "@/lib/types";
 import type { GeminiResponse } from "@/lib/types";
 import WordCard from "@/components/WordCard";
 import WordEditor from "@/components/WordEditor";
@@ -13,6 +14,7 @@ import FileUploader from "@/components/FileUploader";
 import StatsCard from "@/components/StatsCard";
 import ProgressBar from "@/components/ProgressBar";
 import AuthHeader from "@/components/AuthHeader";
+import { exportAsCSV } from "@/lib/export";
 
 function mergeWords(existing: Word[], newWords: { term: string; meaning: string; partOfSpeech: string; exampleSentence: string; context: string }[]): {
   added: Word[];
@@ -76,14 +78,42 @@ export default function NotebookDetailPage() {
   const [improvingWordId, setImprovingWordId] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<{ added: number; improved: number } | null>(null);
 
+  // Title editing state
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const titleInputRef = useRef<HTMLInputElement>(null);
+
+  // Filter/sort state
+  const [learningDataMap, setLearningDataMap] = useState<Map<string, WordLearningData>>(new Map());
+  const [filterMode, setFilterMode] = useState<"all" | "unlearned" | "weak" | "pos">("all");
+  const [selectedPos, setSelectedPos] = useState<string>("");
+  const [sortMode, setSortMode] = useState<"default" | "term" | "difficulty">("default");
+
+  // Review history for heatmap
+  const [reviewHistory, setReviewHistory] = useState<{ date: string; count: number }[]>([]);
+
   const loadData = useCallback(async () => {
     try {
-      const [nb, st] = await Promise.all([
+      const [nb, st, rh] = await Promise.all([
         getNotebook(id),
         getNotebookStats(id),
+        getReviewHistory(365),
       ]);
-      if (nb) setNotebook(nb);
+      if (nb) {
+        setNotebook(nb);
+        // Load learning data for filter/sort
+        if (nb.words.length > 0) {
+          const wordIds = nb.words.map((w) => w.id);
+          const learningData = await getBatchLearningData(wordIds);
+          const map = new Map<string, WordLearningData>();
+          for (const ld of learningData) {
+            map.set(ld.wordId, ld);
+          }
+          setLearningDataMap(map);
+        }
+      }
       setStats(st);
+      setReviewHistory(rh);
     } catch (err) {
       setError(err instanceof Error ? err.message : "読み込みに失敗しました");
     } finally {
@@ -193,6 +223,84 @@ export default function NotebookDetailPage() {
     }
   }, [notebook, saveAndRefresh]);
 
+  // Title editing handlers
+  const startEditingTitle = useCallback(() => {
+    if (!notebook) return;
+    setEditTitle(notebook.title);
+    setIsEditingTitle(true);
+    setTimeout(() => titleInputRef.current?.focus(), 0);
+  }, [notebook]);
+
+  const saveTitleEdit = useCallback(async () => {
+    if (!notebook || !editTitle.trim()) {
+      setIsEditingTitle(false);
+      return;
+    }
+    if (editTitle.trim() !== notebook.title) {
+      await saveAndRefresh({ ...notebook, title: editTitle.trim() });
+    }
+    setIsEditingTitle(false);
+  }, [notebook, editTitle, saveAndRefresh]);
+
+  const cancelTitleEdit = useCallback(() => {
+    setIsEditingTitle(false);
+  }, []);
+
+  // Extract unique parts of speech
+  const uniquePartsOfSpeech = useMemo(() => {
+    if (!notebook) return [];
+    const posSet = new Set<string>();
+    for (const w of notebook.words) {
+      if (w.partOfSpeech) posSet.add(w.partOfSpeech);
+    }
+    return Array.from(posSet).sort();
+  }, [notebook]);
+
+  // Filtered and sorted words
+  const filteredWords = useMemo(() => {
+    if (!notebook) return [];
+    let words = [...notebook.words];
+
+    // Filter
+    switch (filterMode) {
+      case "unlearned":
+        words = words.filter((w) => {
+          const ld = learningDataMap.get(w.id);
+          return !ld || ld.totalReviews === 0;
+        });
+        break;
+      case "weak":
+        words = words.filter((w) => {
+          const ld = learningDataMap.get(w.id);
+          if (!ld) return false;
+          return ld.easeFactor < 2.0 || ld.lapses > 0;
+        });
+        break;
+      case "pos":
+        if (selectedPos) {
+          words = words.filter((w) => w.partOfSpeech === selectedPos);
+        }
+        break;
+    }
+
+    // Sort
+    switch (sortMode) {
+      case "term":
+        words.sort((a, b) => a.term.localeCompare(b.term));
+        break;
+      case "difficulty":
+        words.sort((a, b) => {
+          const ldA = learningDataMap.get(a.id);
+          const ldB = learningDataMap.get(b.id);
+          return (ldA?.easeFactor ?? 2.5) - (ldB?.easeFactor ?? 2.5);
+        });
+        break;
+      // "default" keeps original order
+    }
+
+    return words;
+  }, [notebook, filterMode, selectedPos, sortMode, learningDataMap]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -246,9 +354,39 @@ export default function NotebookDetailPage() {
 
       <main className="flex-1 max-w-4xl mx-auto px-4 py-8 w-full">
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            {notebook.title}
-          </h1>
+          {isEditingTitle ? (
+            <input
+              ref={titleInputRef}
+              type="text"
+              value={editTitle}
+              onChange={(e) => setEditTitle(e.target.value)}
+              onBlur={saveTitleEdit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveTitleEdit();
+                if (e.key === "Escape") cancelTitleEdit();
+              }}
+              className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 bg-transparent border-b-2 border-blue-500 outline-none w-full"
+            />
+          ) : (
+            <div className="flex items-center gap-2 group/title">
+              <h1
+                className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 cursor-pointer"
+                onClick={startEditingTitle}
+              >
+                {notebook.title}
+              </h1>
+              <button
+                onClick={startEditingTitle}
+                className="text-zinc-400 hover:text-blue-500 opacity-0 group-hover/title:opacity-100 transition-opacity p-1"
+                aria-label="タイトルを編集"
+                title="タイトルを編集"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+            </div>
+          )}
           <p className="text-sm text-zinc-500 mt-1">
             {notebook.words.length}語 ・
             作成日: {new Date(notebook.createdAt).toLocaleDateString("ja-JP")}
@@ -326,6 +464,13 @@ export default function NotebookDetailPage() {
           </div>
         )}
 
+        {/* Learning Calendar Heatmap */}
+        {showStats && (
+          <div className="mb-8">
+            <CalendarHeatmap data={reviewHistory} />
+          </div>
+        )}
+
         {/* 単語追加アクション */}
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
@@ -344,8 +489,77 @@ export default function NotebookDetailPage() {
             >
               AI追加
             </button>
+            <button
+              onClick={() => notebook && exportAsCSV(notebook)}
+              className="text-xs px-3 py-1.5 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            >
+              CSV出力
+            </button>
           </div>
         </div>
+
+        {/* Filter/Sort Controls */}
+        {notebook.words.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <div className="flex items-center gap-1 text-xs">
+              <span className="text-zinc-500 mr-1">絞り込み:</span>
+              {([
+                { key: "all", label: "全て" },
+                { key: "unlearned", label: "未学習" },
+                { key: "weak", label: "苦手" },
+                { key: "pos", label: "品詞別" },
+              ] as const).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setFilterMode(key);
+                    if (key === "pos" && !selectedPos && uniquePartsOfSpeech.length > 0) {
+                      setSelectedPos(uniquePartsOfSpeech[0]);
+                    }
+                  }}
+                  className={`px-2.5 py-1 rounded-full border transition-colors ${
+                    filterMode === key
+                      ? "bg-blue-600 text-white border-blue-600"
+                      : "border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+              {filterMode === "pos" && (
+                <select
+                  value={selectedPos}
+                  onChange={(e) => setSelectedPos(e.target.value)}
+                  className="px-2 py-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 text-xs"
+                >
+                  {uniquePartsOfSpeech.map((pos) => (
+                    <option key={pos} value={pos}>{pos}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="flex items-center gap-1 text-xs ml-auto">
+              <span className="text-zinc-500 mr-1">並び替え:</span>
+              {([
+                { key: "default", label: "デフォルト" },
+                { key: "term", label: "単語名" },
+                { key: "difficulty", label: "難易度" },
+              ] as const).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setSortMode(key)}
+                  className={`px-2.5 py-1 rounded-full border transition-colors ${
+                    sortMode === key
+                      ? "bg-blue-600 text-white border-blue-600"
+                      : "border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* マージ結果通知 */}
         {mergeResult && (
@@ -387,7 +601,7 @@ export default function NotebookDetailPage() {
 
         {/* 単語一覧 */}
         <div className="grid gap-3">
-          {notebook.words.map((word) => (
+          {filteredWords.map((word) => (
             editingWordId === word.id ? (
               <WordEditor
                 key={word.id}

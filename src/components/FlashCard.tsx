@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Word } from "@/lib/types";
 import type { ReviewScore } from "@/lib/types";
+import SpeakButton from "@/components/SpeakButton";
 
 type Props = {
   word: Word;
@@ -56,16 +57,22 @@ export default function FlashCard({ word, onScore }: Props) {
       >
         {!isFlipped ? (
           <div className="text-center">
-            <p className="text-3xl font-bold text-zinc-900 dark:text-zinc-100 mb-2">
-              {word.term}
-            </p>
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <p className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">
+                {word.term}
+              </p>
+              <SpeakButton text={word.term} className="text-zinc-400 hover:text-blue-500" />
+            </div>
             <p className="text-sm text-zinc-400">タップまたはSpaceで意味を表示</p>
           </div>
         ) : (
           <div className="text-center" aria-live="polite">
-            <p className="text-xl font-bold text-zinc-900 dark:text-zinc-100 mb-1">
-              {word.term}
-            </p>
+            <div className="flex items-center justify-center gap-2 mb-1">
+              <p className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
+                {word.term}
+              </p>
+              <SpeakButton text={word.term} className="text-zinc-400 hover:text-blue-500" />
+            </div>
             <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 mb-3 inline-block">
               {word.partOfSpeech}
             </span>

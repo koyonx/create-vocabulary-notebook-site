@@ -1,6 +1,6 @@
 import { getSupabase } from "./supabase";
 import { createDefaultLearningData, calculatePriority } from "./sm2";
-import type { Notebook, WordLearningData } from "./types";
+import type { Notebook, Word, WordLearningData } from "./types";
 
 function isSupabaseConfigured(): boolean {
   return !!(
@@ -29,6 +29,40 @@ async function shouldUseSupabase(): Promise<boolean> {
 
 const NOTEBOOKS_KEY = "vocab-notebooks";
 const LEARNING_KEY = "vocab-learning";
+const REVIEW_LOGS_KEY = "vocab-review-logs";
+
+type LocalReviewLog = {
+  wordId: string;
+  score: number;
+  mode: string;
+  reviewedAt: string;
+};
+
+function localSaveReviewLog(wordId: string, score: number, mode: string): void {
+  if (typeof window === "undefined") return;
+  const logs = safeJsonParse<LocalReviewLog[]>(localStorage.getItem(REVIEW_LOGS_KEY), []);
+  logs.push({ wordId, score, mode, reviewedAt: new Date().toISOString() });
+  safeLocalStorageSet(REVIEW_LOGS_KEY, JSON.stringify(logs));
+}
+
+function localGetReviewHistory(days: number): { date: string; count: number }[] {
+  if (typeof window === "undefined") return [];
+  const logs = safeJsonParse<LocalReviewLog[]>(localStorage.getItem(REVIEW_LOGS_KEY), []);
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  const cutoffStr = cutoff.toISOString();
+
+  const counts = new Map<string, number>();
+  for (const log of logs) {
+    if (log.reviewedAt < cutoffStr) continue;
+    const date = log.reviewedAt.slice(0, 10); // YYYY-MM-DD
+    counts.set(date, (counts.get(date) || 0) + 1);
+  }
+
+  return Array.from(counts.entries())
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
 
 function safeJsonParse<T>(raw: string | null, fallback: T): T {
   if (!raw) return fallback;
@@ -307,6 +341,33 @@ async function supaSaveReviewLog(
   if (error) console.error("Failed to save review log:", error);
 }
 
+async function supaGetReviewHistory(days: number): Promise<{ date: string; count: number }[]> {
+  const supabase = getSupabase();
+  const userId = await getCurrentUserId();
+  if (!userId) return [];
+
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+
+  const { data, error } = await supabase
+    .from("review_logs")
+    .select("reviewed_at")
+    .eq("user_id", userId)
+    .gte("reviewed_at", cutoff.toISOString());
+
+  if (error || !data) return [];
+
+  const counts = new Map<string, number>();
+  for (const row of data) {
+    const date = (row.reviewed_at as string).slice(0, 10);
+    counts.set(date, (counts.get(date) || 0) + 1);
+  }
+
+  return Array.from(counts.entries())
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
 // ============================
 // 統合エクスポート（async API）
 // ============================
@@ -351,7 +412,21 @@ export async function saveReviewLog(
   score: number,
   mode: "flashcard" | "quiz"
 ): Promise<void> {
-  if (await shouldUseSupabase()) return supaSaveReviewLog(wordId, score, mode);
+  if (await shouldUseSupabase()) {
+    await supaSaveReviewLog(wordId, score, mode);
+    return;
+  }
+  localSaveReviewLog(wordId, score, mode);
+}
+
+export async function getReviewHistory(days: number): Promise<{ date: string; count: number }[]> {
+  if (await shouldUseSupabase()) return supaGetReviewHistory(days);
+  return localGetReviewHistory(days);
+}
+
+export async function getCrossNotebookWords(notebookIds: string[]): Promise<Word[]> {
+  const notebooks = await Promise.all(notebookIds.map((nid) => getNotebook(nid)));
+  return notebooks.flatMap((nb) => nb?.words || []);
 }
 
 export async function getStudyQueue(notebookId: string): Promise<string[]> {

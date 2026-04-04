@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { FillBlankQuestion } from "@/lib/quiz.types";
+import SpeakButton from "@/components/SpeakButton";
 
 type Props = {
   questions: FillBlankQuestion[];
@@ -84,7 +85,10 @@ export default function FillBlankMode({ questions, onAnswer, onComplete }: Props
 
       {/* Question */}
       <div className="rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-6 mb-6">
-        <p className="text-sm text-zinc-500 mb-3">空欄に当てはまる単語・熟語を入力してください</p>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm text-zinc-500">空欄に当てはまる単語・熟語を入力してください</p>
+          <SpeakButton text={question.sentence.replace(question.blank || "______", question.answer)} />
+        </div>
         <p className="text-lg text-zinc-900 dark:text-zinc-100 leading-relaxed">
           {renderSentence()}
         </p>

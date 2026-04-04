@@ -1,4 +1,5 @@
 import type { Word } from "@/lib/types";
+import SpeakButton from "@/components/SpeakButton";
 
 type Props = {
   word: Word;
@@ -17,6 +18,7 @@ export default function WordCard({ word, onDelete, onEdit, onImprove, isImprovin
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
               {word.term}
             </h3>
+            <SpeakButton text={word.term} />
             {word.partOfSpeech && (
               <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300">
                 {word.partOfSpeech}

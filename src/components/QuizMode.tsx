@@ -2,14 +2,16 @@
 
 import { useState } from "react";
 import type { QuizQuestion } from "@/lib/quiz.types";
+import SpeakButton from "@/components/SpeakButton";
 
 type Props = {
   questions: QuizQuestion[];
   onAnswer: (questionIndex: number, isCorrect: boolean) => void;
   onComplete: () => void;
+  direction?: "term-to-meaning" | "meaning-to-term";
 };
 
-export default function QuizMode({ questions, onAnswer, onComplete }: Props) {
+export default function QuizMode({ questions, onAnswer, onComplete, direction }: Props) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [isAnswered, setIsAnswered] = useState(false);
@@ -65,10 +67,17 @@ export default function QuizMode({ questions, onAnswer, onComplete }: Props) {
 
       {/* Question */}
       <div className="rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-6 mb-6">
-        <p className="text-sm text-zinc-500 mb-2">この単語の意味は？</p>
-        <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-          {question.questionWord}
+        <p className="text-sm text-zinc-500 mb-2">
+          {(direction || question.direction) === "meaning-to-term" ? "この意味の単語は？" : "この単語の意味は？"}
         </p>
+        <div className="flex items-center justify-center gap-2">
+          <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
+            {question.questionWord}
+          </p>
+          {(direction || question.direction) !== "meaning-to-term" && (
+            <SpeakButton text={question.questionWord} />
+          )}
+        </div>
       </div>
 
       {/* Choices */}

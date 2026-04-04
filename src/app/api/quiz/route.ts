@@ -133,7 +133,41 @@ export async function POST(request: NextRequest) {
 
     let prompt: string;
 
-    if (quizMode === "fill-blank") {
+    if (quizMode === "reverse") {
+      prompt = `あなたは語学学習クイズの作成者です。
+以下の単語・熟語リストから「意味→単語」の逆引き4択クイズを作成してください。
+意味を表示して、正しい単語を選ばせるクイズです。
+
+## 出題対象の単語・熟語
+${quizTargets.map((w) => `- [ID:${w.id}] ${w.term}: ${w.meaning}`).join("\n")}
+
+## 全単語・熟語リスト（不正解の選択肢として使用可能）
+${words.map((w) => `- ${w.term}: ${w.meaning}`).join("\n")}
+
+以下のJSON形式で出力してください。必ずJSON形式のみで返答してください。
+
+{
+  "questions": [
+    {
+      "wordId": "出題する単語のID（上記の[ID:xxx]の値をそのまま使用）",
+      "questionWord": "日本語の意味（問題文として表示）",
+      "correctAnswer": "正しい単語・熟語",
+      "choices": ["単語1", "単語2", "単語3", "単語4"],
+      "correctIndex": 0
+    }
+  ]
+}
+
+注意事項:
+- 出題対象の各単語・熟語について1問ずつ作成してください
+- wordIdは必ず上記の[ID:xxx]の値をそのまま使用してください
+- questionWordには日本語の意味を記載してください（これが問題文になります）
+- correctAnswerには正しい単語・熟語を記載してください
+- choicesには正解を含めた4つの単語・熟語を入れてください
+- correctIndexは0始まりで正解の位置を示してください
+- 不正解の選択肢は紛らわしいが明確に異なるものにしてください
+- 選択肢の順序はランダムにしてください`;
+    } else if (quizMode === "fill-blank") {
       prompt = `あなたは語学学習クイズの作成者です。
 以下の単語・熟語リストから穴埋め問題を作成してください。
 
@@ -203,6 +237,15 @@ ${words.map((w) => `- ${w.term}: ${w.meaning}`).join("\n")}
     const validated = quizMode === "fill-blank"
       ? validateFillBlank(parsed, validWordIds)
       : validateMultipleChoice(parsed, validWordIds);
+
+    // Add direction metadata for reverse quiz
+    if (quizMode === "reverse" && "questions" in validated && Array.isArray(validated.questions)) {
+      for (const q of validated.questions) {
+        if ("choices" in q) {
+          (q as QuizQuestion).direction = "meaning-to-term";
+        }
+      }
+    }
 
     return NextResponse.json(validated);
   } catch (error) {

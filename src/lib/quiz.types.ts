@@ -4,6 +4,7 @@ export type QuizQuestion = {
   correctAnswer: string;
   choices: string[];
   correctIndex: number;
+  direction?: "term-to-meaning" | "meaning-to-term";
 };
 
 export type FillBlankQuestion = {
