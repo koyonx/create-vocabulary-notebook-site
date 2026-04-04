@@ -40,13 +40,20 @@ export default function CalendarHeatmap({ data }: Props) {
     startDate.setDate(startDate.getDate() - startDate.getDay());
 
     const weeksArr: { date: string; count: number; dayOfWeek: number; isToday: boolean; isFuture: boolean }[][] = [];
-    const todayStr = today.toISOString().slice(0, 10);
+    // ローカルタイムでISO日付文字列を生成（UTCずれ防止）
+    const toLocalDateStr = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+    const todayStr = toLocalDateStr(today);
 
     let current = new Date(startDate);
     let currentWeek: typeof weeksArr[number] = [];
 
     while (current <= endDate || currentWeek.length > 0) {
-      const dateStr = current.toISOString().slice(0, 10);
+      const dateStr = toLocalDateStr(current);
       const isFuture = current > today;
 
       currentWeek.push({

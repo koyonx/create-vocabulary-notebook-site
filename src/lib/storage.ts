@@ -45,17 +45,24 @@ function localSaveReviewLog(wordId: string, score: number, mode: string): void {
   safeLocalStorageSet(REVIEW_LOGS_KEY, JSON.stringify(logs));
 }
 
+function toLocalDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function localGetReviewHistory(days: number): { date: string; count: number }[] {
   if (typeof window === "undefined") return [];
   const logs = safeJsonParse<LocalReviewLog[]>(localStorage.getItem(REVIEW_LOGS_KEY), []);
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
-  const cutoffStr = cutoff.toISOString();
 
   const counts = new Map<string, number>();
   for (const log of logs) {
-    if (log.reviewedAt < cutoffStr) continue;
-    const date = log.reviewedAt.slice(0, 10); // YYYY-MM-DD
+    const logDate = new Date(log.reviewedAt);
+    if (logDate < cutoff) continue;
+    const date = toLocalDateStr(logDate);
     counts.set(date, (counts.get(date) || 0) + 1);
   }
 

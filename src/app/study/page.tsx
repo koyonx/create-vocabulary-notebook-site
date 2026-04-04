@@ -280,6 +280,18 @@ function CrossStudyContent() {
 
   const currentWordNotebook = currentWord ? wordNotebookMap.get(currentWord.id) : undefined;
 
+  // Bug 6 fix: MAX_REQUEUEに達した最後のカードで完了を検出
+  useEffect(() => {
+    if (
+      (mode === "flashcard" || mode === "reverse") &&
+      !isComplete &&
+      fcState.queue.length > 0 &&
+      fcState.currentIndex >= fcState.queue.length
+    ) {
+      setIsComplete(true);
+    }
+  }, [fcState.currentIndex, fcState.queue.length, mode, isComplete]);
+
   const canQuiz = allWords.length >= 4;
 
   // For reverse mode, swap term and meaning

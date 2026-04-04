@@ -1,7 +1,7 @@
 import type { Notebook } from "@/lib/types";
 
 export function exportAsCSV(notebook: Notebook): void {
-  const escape = (s: string) => `"${s.replace(/"/g, '""')}"`;
+  const escape = (s: string | undefined | null) => `"${(s || "").replace(/"/g, '""')}"`;
   const header = "term,meaning,partOfSpeech,exampleSentence,context";
   const rows = notebook.words.map((w) =>
     [w.term, w.meaning, w.partOfSpeech, w.exampleSentence, w.context]

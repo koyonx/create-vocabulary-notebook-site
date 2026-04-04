@@ -311,6 +311,19 @@ export default function StudyPage() {
     ? words.get(fcState.queue[fcState.currentIndex])
     : undefined;
 
+  // Bug 6 fix: MAX_REQUEUEに達した最後のカードで完了を検出
+  useEffect(() => {
+    if (
+      mode === "flashcard" &&
+      !isComplete &&
+      !noDueWords &&
+      fcState.queue.length > 0 &&
+      fcState.currentIndex >= fcState.queue.length
+    ) {
+      setIsComplete(true);
+    }
+  }, [fcState.currentIndex, fcState.queue.length, mode, isComplete, noDueWords]);
+
   const canQuiz = allWords.length >= 4;
 
   if (loading) {
