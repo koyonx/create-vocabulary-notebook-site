@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import FlashCard from "@/components/FlashCard";
 import QuizMode from "@/components/QuizMode";
+import FillBlankMode from "@/components/FillBlankMode";
 import AuthHeader from "@/components/AuthHeader";
 import {
   getNotebook,
@@ -16,9 +17,9 @@ import {
 } from "@/lib/storage";
 import { updateSM2 } from "@/lib/sm2";
 import type { Word, ReviewScore } from "@/lib/types";
-import type { QuizQuestion } from "@/lib/quiz.types";
+import type { QuizQuestion, FillBlankQuestion } from "@/lib/quiz.types";
 
-type StudyMode = "flashcard" | "quiz";
+type StudyMode = "flashcard" | "quiz" | "fill-blank";
 
 const MAX_REQUEUE = 3;
 
@@ -42,7 +43,6 @@ function flashcardReducer(state: FlashcardState, action: FlashcardAction): Flash
     case "requeue": {
       const count = state.requeueCount.get(action.wordId) || 0;
       if (count >= MAX_REQUEUE) {
-        // 上限に達した場合はrequeueせず次へ進む
         return { ...state, currentIndex: state.currentIndex + 1 };
       }
       const newCount = new Map(state.requeueCount);
@@ -74,10 +74,10 @@ export default function StudyPage() {
 
   // Quiz state
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
+  const [fillBlankQuestions, setFillBlankQuestions] = useState<FillBlankQuestion[]>([]);
   const [quizLoading, setQuizLoading] = useState(false);
   const [quizError, setQuizError] = useState<string | null>(null);
 
-  // Ref for stable handleScore callback
   const fcStateRef = useRef(fcState);
   fcStateRef.current = fcState;
 
@@ -97,14 +97,11 @@ export default function StudyPage() {
 
         const studyQueue = await getStudyQueue(id);
         if (studyQueue.length === 0 && notebook.words.length > 0) {
-          // 全単語が復習期限前 → 新規カードとして投入
           const allLd = await getBatchLearningData(notebook.words.map((w) => w.id));
           const hasReviewed = allLd.some((ld) => ld.totalReviews > 0);
           if (hasReviewed) {
-            // 学習済みで期限前 → 復習不要
             setNoDueWords(true);
           } else {
-            // 全て未学習 → 全投入
             dispatch({ type: "init", queue: notebook.words.map((w) => w.id) });
           }
         } else {
@@ -118,9 +115,9 @@ export default function StudyPage() {
     })();
   }, [id]);
 
-  const generateQuiz = useCallback(async () => {
+  const generateQuiz = useCallback(async (quizMode: "quiz" | "fill-blank") => {
     if (allWords.length < 4) {
-      setQuizError("クイズ生成には最低4つの単語が必要です");
+      setQuizError("クイズ生成には最低4つの単語・熟語が必要です");
       return;
     }
 
@@ -135,19 +132,32 @@ export default function StudyPage() {
         id: w.id,
         term: w.term,
         meaning: w.meaning,
+        exampleSentence: w.exampleSentence,
         isWeak: allLd[i].easeFactor < 2.0 || allLd[i].lapses > 0,
       }));
+
+      const apiMode = quizMode === "fill-blank" ? "fill-blank" : "multiple-choice";
 
       const res = await fetch("/api/quiz", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ words: wordsWithWeakness }),
+        body: JSON.stringify({
+          words: wordsWithWeakness,
+          mode: apiMode,
+          count: Math.min(allWords.length, 20),
+        }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      setQuizQuestions(data.questions);
+      if (quizMode === "fill-blank") {
+        setFillBlankQuestions(data.questions);
+        setQuizQuestions([]);
+      } else {
+        setQuizQuestions(data.questions);
+        setFillBlankQuestions([]);
+      }
     } catch (err) {
       setQuizError(err instanceof Error ? err.message : "クイズ生成に失敗しました");
     } finally {
@@ -162,8 +172,8 @@ export default function StudyPage() {
       setNoDueWords(false);
       setSessionStats({ reviewed: 0, correct: 0 });
 
-      if (newMode === "quiz") {
-        await generateQuiz();
+      if (newMode === "quiz" || newMode === "fill-blank") {
+        await generateQuiz(newMode);
       } else {
         try {
           const studyQueue = await getStudyQueue(id);
@@ -181,7 +191,6 @@ export default function StudyPage() {
     [id, generateQuiz]
   );
 
-  // Stable callback using ref to avoid re-creating on every fcState change
   const handleScore = useCallback(
     async (score: ReviewScore) => {
       const state = fcStateRef.current;
@@ -209,16 +218,21 @@ export default function StudyPage() {
         }
       }
     },
-    [] // stable: uses ref
+    []
   );
 
   const handleQuizAnswer = useCallback(
     async (questionIndex: number, isCorrect: boolean) => {
-      const question = quizQuestions[questionIndex];
-      if (!question) return;
+      // 4択 or 穴埋め共通
+      const mcQ = quizQuestions[questionIndex];
+      const fbQ = fillBlankQuestions[questionIndex];
+      const wordId = mcQ?.wordId || fbQ?.wordId;
 
-      const wordId = question.wordId;
-      const word = wordId ? words.get(wordId) : allWords.find((w) => w.term === question.questionWord);
+      const word = wordId
+        ? words.get(wordId)
+        : mcQ
+        ? allWords.find((w) => w.term === mcQ.questionWord)
+        : null;
 
       if (word) {
         const score: ReviewScore = isCorrect ? 4 : 1;
@@ -233,7 +247,7 @@ export default function StudyPage() {
         correct: isCorrect ? prev.correct + 1 : prev.correct,
       }));
     },
-    [quizQuestions, allWords, words]
+    [quizQuestions, fillBlankQuestions, allWords, words]
   );
 
   const handleQuizComplete = useCallback(() => {
@@ -245,8 +259,8 @@ export default function StudyPage() {
     setNoDueWords(false);
     setSessionStats({ reviewed: 0, correct: 0 });
 
-    if (mode === "quiz") {
-      await generateQuiz();
+    if (mode === "quiz" || mode === "fill-blank") {
+      await generateQuiz(mode);
     } else {
       try {
         const studyQueue = await getStudyQueue(id);
@@ -298,6 +312,15 @@ export default function StudyPage() {
     );
   }
 
+  const modeTabClass = (m: StudyMode, disabled = false) =>
+    `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+      mode === m
+        ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
+        : disabled
+        ? "text-zinc-400 dark:text-zinc-600 cursor-not-allowed"
+        : "text-zinc-600 dark:text-zinc-400"
+    }`;
+
   return (
     <div className="flex flex-col min-h-screen bg-zinc-50 dark:bg-zinc-950">
       <AuthHeader
@@ -314,51 +337,38 @@ export default function StudyPage() {
       <main className="flex-1 flex flex-col items-center px-4 py-8">
         {/* Mode Switcher */}
         <div className="flex gap-1 p-1 bg-zinc-200 dark:bg-zinc-800 rounded-lg mb-8" role="tablist">
-          <button
-            role="tab"
-            aria-selected={mode === "flashcard"}
-            onClick={() => handleModeSwitch("flashcard")}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              mode === "flashcard"
-                ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
-                : "text-zinc-600 dark:text-zinc-400"
-            }`}
-          >
+          <button role="tab" aria-selected={mode === "flashcard"} onClick={() => handleModeSwitch("flashcard")} className={modeTabClass("flashcard")}>
             フラッシュカード
           </button>
           <button
             role="tab"
             aria-selected={mode === "quiz"}
-            onClick={() => handleModeSwitch("quiz")}
+            onClick={() => canQuiz && handleModeSwitch("quiz")}
             disabled={!canQuiz}
-            title={!canQuiz ? "クイズには4語以上の単語が必要です" : undefined}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              mode === "quiz"
-                ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
-                : !canQuiz
-                ? "text-zinc-400 dark:text-zinc-600 cursor-not-allowed"
-                : "text-zinc-600 dark:text-zinc-400"
-            }`}
+            title={!canQuiz ? "4語以上必要です" : undefined}
+            className={modeTabClass("quiz", !canQuiz)}
           >
             4択クイズ
+          </button>
+          <button
+            role="tab"
+            aria-selected={mode === "fill-blank"}
+            onClick={() => canQuiz && handleModeSwitch("fill-blank")}
+            disabled={!canQuiz}
+            title={!canQuiz ? "4語以上必要です" : undefined}
+            className={modeTabClass("fill-blank", !canQuiz)}
+          >
+            穴埋め
           </button>
         </div>
 
         {isComplete ? (
           <div className="text-center">
             <div className="text-5xl mb-4">&#10024;</div>
-            <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-2">
-              学習完了！
-            </h2>
-            <p className="text-zinc-600 dark:text-zinc-400 mb-2">
-              {sessionStats.reviewed}問回答しました
-            </p>
+            <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-2">学習完了！</h2>
+            <p className="text-zinc-600 dark:text-zinc-400 mb-2">{sessionStats.reviewed}問回答しました</p>
             <p className="text-zinc-600 dark:text-zinc-400 mb-6">
-              正答率:{" "}
-              {sessionStats.reviewed > 0
-                ? Math.round((sessionStats.correct / sessionStats.reviewed) * 100)
-                : 0}
-              %
+              正答率: {sessionStats.reviewed > 0 ? Math.round((sessionStats.correct / sessionStats.reviewed) * 100) : 0}%
             </p>
             <div className="flex gap-3 justify-center">
               <Link
@@ -367,10 +377,7 @@ export default function StudyPage() {
               >
                 単語帳に戻る
               </Link>
-              <button
-                onClick={handleRestart}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
+              <button onClick={handleRestart} className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
                 もう一度
               </button>
             </div>
@@ -378,12 +385,8 @@ export default function StudyPage() {
         ) : noDueWords ? (
           <div className="text-center py-12">
             <div className="text-4xl mb-4">&#9989;</div>
-            <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100 mb-2">
-              復習する単語はありません
-            </h2>
-            <p className="text-zinc-500 mb-6">
-              全ての単語が復習期限内です。また後で来てください。
-            </p>
+            <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-100 mb-2">復習する単語はありません</h2>
+            <p className="text-zinc-500 mb-6">全ての単語が復習期限内です。また後で来てください。</p>
             <div className="flex gap-3 justify-center">
               <Link
                 href={`/notebooks/${id}`}
@@ -392,10 +395,7 @@ export default function StudyPage() {
                 単語帳に戻る
               </Link>
               <button
-                onClick={() => {
-                  setNoDueWords(false);
-                  dispatch({ type: "init", queue: allWords.map((w) => w.id) });
-                }}
+                onClick={() => { setNoDueWords(false); dispatch({ type: "init", queue: allWords.map((w) => w.id) }); }}
                 className="px-6 py-2 bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-lg hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors"
               >
                 全単語を復習
@@ -408,18 +408,13 @@ export default function StudyPage() {
               <div className="flex justify-between text-sm text-zinc-500 mb-2">
                 <span>{Math.min(fcState.currentIndex, fcState.queue.length)} / {fcState.queue.length} カード</span>
                 <span>
-                  正答率:{" "}
-                  {sessionStats.reviewed > 0
-                    ? Math.round((sessionStats.correct / sessionStats.reviewed) * 100)
-                    : 0}%
+                  正答率: {sessionStats.reviewed > 0 ? Math.round((sessionStats.correct / sessionStats.reviewed) * 100) : 0}%
                 </span>
               </div>
               <div className="w-full h-2 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-blue-500 transition-all duration-300 rounded-full"
-                  style={{
-                    width: `${fcState.queue.length > 0 ? (Math.min(fcState.currentIndex, fcState.queue.length) / fcState.queue.length) * 100 : 0}%`,
-                  }}
+                  style={{ width: `${fcState.queue.length > 0 ? (Math.min(fcState.currentIndex, fcState.queue.length) / fcState.queue.length) * 100 : 0}%` }}
                 />
               </div>
             </div>
@@ -432,19 +427,25 @@ export default function StudyPage() {
         ) : quizLoading ? (
           <div className="flex flex-col items-center gap-3">
             <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm text-zinc-500">AIがクイズを生成中...</p>
+            <p className="text-sm text-zinc-500">AIが{mode === "fill-blank" ? "穴埋め問題" : "クイズ"}を生成中...</p>
           </div>
         ) : quizError ? (
           <div className="text-center">
             <p role="alert" className="text-red-500 mb-4">{quizError}</p>
             <button
-              onClick={generateQuiz}
+              onClick={() => generateQuiz(mode as "quiz" | "fill-blank")}
               className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
               再試行
             </button>
           </div>
-        ) : quizQuestions.length > 0 ? (
+        ) : mode === "fill-blank" && fillBlankQuestions.length > 0 ? (
+          <FillBlankMode
+            questions={fillBlankQuestions}
+            onAnswer={handleQuizAnswer}
+            onComplete={handleQuizComplete}
+          />
+        ) : mode === "quiz" && quizQuestions.length > 0 ? (
           <QuizMode
             questions={quizQuestions}
             onAnswer={handleQuizAnswer}

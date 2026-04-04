@@ -61,8 +61,8 @@ function validateGeminiResponse(data: unknown): GeminiResponse {
 }
 
 const PROMPT = `あなたは語学学習の専門家です。
-提供されたファイル（画像、動画、PDF、音声など）から、学習すべき重要な単語・フレーズを抽出してください。
-音声の場合はまず内容を聞き取り、PDFの場合はテキストを読み取ってから単語を抽出してください。
+提供されたファイル（画像、動画、PDF、音声など）から、学習すべき重要な単語・熟語・フレーズを抽出してください。
+音声の場合はまず内容を聞き取り、PDFの場合はテキストを読み取ってから抽出してください。
 
 以下のJSON形式で出力してください。必ずJSON形式のみで返答し、他のテキストは含めないでください。
 
@@ -70,19 +70,20 @@ const PROMPT = `あなたは語学学習の専門家です。
   "title": "内容に基づいた単語帳のタイトル",
   "words": [
     {
-      "term": "単語やフレーズ",
+      "term": "単語、熟語、またはフレーズ",
       "meaning": "日本語での意味",
-      "partOfSpeech": "品詞（noun, verb, adjective, adverb, phrase など）",
-      "exampleSentence": "その単語を使った例文",
+      "partOfSpeech": "品詞（noun, verb, adjective, adverb, phrase, idiom など）",
+      "exampleSentence": "その単語・熟語を使った例文",
       "context": "ファイル内でどこに出現したかの説明（ページ番号、時間、位置など）"
     }
   ]
 }
 
 注意事項:
-- 重要度の高い単語から順に抽出してください
+- 単語だけでなく、熟語（look forward to, take into account 等）やイディオムも積極的に抽出してください
+- 重要度の高いものから順に抽出してください
 - 基本的な単語（a, the, is 等）は除外してください
-- 各単語の意味は簡潔かつ正確に記載してください
+- 各単語・熟語の意味は簡潔かつ正確に記載してください
 - 例文は実用的なものにしてください`;
 
 export async function analyzeWithGemini(

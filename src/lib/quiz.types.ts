@@ -6,6 +6,18 @@ export type QuizQuestion = {
   correctIndex: number;
 };
 
+export type FillBlankQuestion = {
+  wordId: string;
+  sentence: string;
+  blank: string;
+  answer: string;
+  hint: string;
+};
+
 export type QuizData = {
   questions: QuizQuestion[];
+};
+
+export type FillBlankData = {
+  questions: FillBlankQuestion[];
 };
