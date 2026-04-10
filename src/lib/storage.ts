@@ -286,14 +286,33 @@ async function supaGetLearningData(wordId: string): Promise<WordLearningData> {
 async function supaGetBatchLearningData(wordIds: string[]): Promise<WordLearningData[]> {
   if (wordIds.length === 0) return [];
   const supabase = getSupabase();
-  const { data, error } = await supabase
-    .from("word_learning")
-    .select("*")
-    .in("word_id", wordIds);
 
-  if (error) throw error;
+  type WordLearningRow = {
+    word_id: string;
+    ease_factor: number;
+    interval_days: number;
+    repetition: number;
+    lapses: number;
+    total_reviews: number;
+    correct_count: number;
+    next_review_at: string;
+    last_reviewed_at: string | null;
+  };
 
-  const dataMap = new Map((data || []).map((d) => [d.word_id, d]));
+  // チャンク分割: .in() はURLクエリパラメータになるため、大量のUUIDだとリクエストが失敗する
+  const CHUNK_SIZE = 30;
+  const allData: WordLearningRow[] = [];
+  for (let i = 0; i < wordIds.length; i += CHUNK_SIZE) {
+    const chunk = wordIds.slice(i, i + CHUNK_SIZE);
+    const { data, error } = await supabase
+      .from("word_learning")
+      .select("*")
+      .in("word_id", chunk);
+    if (error) throw error;
+    if (data) allData.push(...data);
+  }
+
+  const dataMap = new Map(allData.map((d) => [d.word_id, d]));
 
   return wordIds.map((id) => {
     const d = dataMap.get(id);

@@ -94,14 +94,13 @@ export default function NotebookDetailPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [nb, st, rh] = await Promise.all([
+      const [nb, rh] = await Promise.all([
         getNotebook(id),
-        getNotebookStats(id),
         getReviewHistory(365),
       ]);
       if (nb) {
         setNotebook(nb);
-        // Load learning data for filter/sort
+        // Load learning data once, then compute stats from it
         if (nb.words.length > 0) {
           const wordIds = nb.words.map((w) => w.id);
           const learningData = await getBatchLearningData(wordIds);
@@ -111,8 +110,8 @@ export default function NotebookDetailPage() {
           }
           setLearningDataMap(map);
         }
+        setStats(await getNotebookStats(id));
       }
-      setStats(st);
       setReviewHistory(rh);
     } catch (err) {
       setError(err instanceof Error ? err.message : "読み込みに失敗しました");
