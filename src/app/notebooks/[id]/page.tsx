@@ -88,6 +88,7 @@ export default function NotebookDetailPage() {
   const [filterMode, setFilterMode] = useState<"all" | "unlearned" | "weak" | "pos">("all");
   const [selectedPos, setSelectedPos] = useState<string>("");
   const [sortMode, setSortMode] = useState<"default" | "term" | "difficulty">("default");
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Review history for heatmap
   const [reviewHistory, setReviewHistory] = useState<{ date: string; count: number }[]>([]);
@@ -260,6 +261,18 @@ export default function NotebookDetailPage() {
     if (!notebook) return [];
     let words = [...notebook.words];
 
+    // Search
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      words = words.filter(
+        (w) =>
+          w.term.toLowerCase().includes(q) ||
+          w.meaning.toLowerCase().includes(q) ||
+          w.exampleSentence?.toLowerCase().includes(q) ||
+          w.partOfSpeech?.toLowerCase().includes(q)
+      );
+    }
+
     // Filter
     switch (filterMode) {
       case "unlearned":
@@ -298,7 +311,7 @@ export default function NotebookDetailPage() {
     }
 
     return words;
-  }, [notebook, filterMode, selectedPos, sortMode, learningDataMap]);
+  }, [notebook, filterMode, selectedPos, sortMode, learningDataMap, searchQuery]);
 
   if (loading) {
     return (
@@ -496,6 +509,34 @@ export default function NotebookDetailPage() {
             </button>
           </div>
         </div>
+
+        {/* Search */}
+        {notebook.words.length > 0 && (
+          <div className="mb-4">
+            <div className="relative">
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="単語・意味・例文を検索..."
+                className="w-full pl-9 pr-8 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Filter/Sort Controls */}
         {notebook.words.length > 0 && (
